@@ -1,4 +1,4 @@
-# Exploration of LLMs
+# Exploration for LLMs
 
 [![PyPI - Version](https://img.shields.io/pypi/v/ellm.svg)](https://pypi.org/project/ellm)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ellm.svg)](https://pypi.org/project/ellm)
@@ -7,7 +7,7 @@
 
 ## Table of Contents
 
-- [Exploration of LLMs](#exploration-of-llms)
+- [Exploration for LLMs](#exploration-for-llms)
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
   - [License](#license)
