@@ -18,10 +18,13 @@ from ellm.actor import Actor
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
 from ellm.types import PreferenceData
-from ellm.utils.data import (PreferenceDataset, PromptDataset,
-                             blending_datasets, get_tokenizer)
-from ellm.utils.distributed import (init_process_group,
-                                    node_ip_address_from_perspective)
+from ellm.utils.data import (
+    PreferenceDataset,
+    PromptDataset,
+    blending_datasets,
+    get_tokenizer,
+)
+from ellm.utils.distributed import init_process_group, node_ip_address_from_perspective
 from ellm.utils.launcher import DistributedLauncher
 from ellm.utils.setup import get_strategy
 
@@ -170,7 +173,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # For ZeRO-3:
         #   1. AllGather parameters to rank 0
         #   2. Broadcast parameters from rank 0 to all vllm engines
-        if strategy.is_rank_0:
+        if strategy.is_rank_0():
             master_addr = node_ip_address_from_perspective()
             with socket.socket() as sock:
                 sock.bind(("", 0))
@@ -186,7 +189,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     master_port,
                     i + 1,
                     world_size,
-                    f"some_group_name_{i+1}",
+                    "ellm",
                     backend=backend,
                 )
                 for i, actor in enumerate(actors)
@@ -196,7 +199,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 init_method=f"tcp://{master_addr}:{master_port}",
                 world_size=world_size,
                 rank=0,
-                group_name="some_group_name_0",
+                group_name="ellm",
             )
             _ = [fut.result() for fut in futs]
 
