@@ -3,6 +3,7 @@ import math
 import os
 from collections import deque
 
+import launchpad as lp
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
@@ -10,6 +11,7 @@ from transformers.trainer import get_scheduler
 
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
+from ellm.types import PreferenceData
 from ellm.utils.data import (PreferenceDataset, PromptDataset,
                              blending_datasets, get_tokenizer)
 from ellm.utils.launcher import DistributedLauncher
@@ -171,10 +173,17 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 disable=not self.strategy.is_rank_0(),
             )
 
-            for prompts in self.prompts_dataloader:
-                preference_data = self.preference_collector(prompts)
-                self.pi_buffer.extend(preference_data)
-                self.r_buffer.extend(preference_data)
+            for processed_prompts, raw_prompts in self.prompts_dataloader:
+                preference_data = self.preference_collector(processed_prompts)
+                for i, pref in enumerate(preference_data):
+                    # Replace with raw prompts instead of templated ones
+                    new_pref = PreferenceData(
+                        prompt=raw_prompts[i],
+                        chosen_response=pref.chosen_response,
+                        rejected_response=pref.rejected_response,
+                    )
+                    self.pi_buffer.append(new_pref)
+                    self.r_buffer.append(new_pref)
 
                 if steps % update_interval == 0:
                     torch.cuda.empty_cache()
@@ -183,6 +192,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                 progress_bar.update()
                 steps += 1
+
+        lp.stop()
 
     def preference_learning(self, update_step):
         dataset = PreferenceDataset(

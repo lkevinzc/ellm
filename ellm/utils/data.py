@@ -173,15 +173,14 @@ def _zero_pad_sequences(sequences, side: str = "left", value=0):
     return torch.stack(padded_sequences, dim=0)
 
 
-def _preprocess_data(
+def _preprocess_preference_data(
     data: PreferenceData,
     apply_chat_template=None,
 ) -> str:
-    prompt = {"content": data.prompt, "role": "user"}
-    chosen = {"content": data.chosen_response, "role": "assistant"}
-    rejected = {"content": data.rejected_response, "role": "assistant"}
-
     if apply_chat_template:
+        prompt = {"content": data.prompt, "role": "user"}
+        chosen = {"content": data.chosen_response, "role": "assistant"}
+        rejected = {"content": data.rejected_response, "role": "assistant"}
         chosen = apply_chat_template([prompt, chosen], tokenize=False)
         rejected = apply_chat_template([prompt, rejected], tokenize=False)
 
@@ -191,13 +190,11 @@ def _preprocess_data(
         chosen = chosen[len(prompt) :]
         rejected = rejected[len(prompt) :]
     else:
-        raise ValueError("must apply chat template")
-        # chosen = data[chosen_key]
-        # rejected = data[rejected_key]
-        # if prompt_key:
-        #     prompt = data[prompt_key]
-        #     if input_template:
-        #         prompt = input_template.format(prompt)
+        prompt = data.prompt
+        chosen = data.chosen_response
+        rejected = data.rejected_response
+        # if input_template:
+        #     prompt = input_template.format(prompt)
 
     return prompt, chosen, rejected
 
@@ -225,33 +222,34 @@ class PromptDataset(Dataset):
         if apply_chat_template:
             apply_chat_template = self.tokenizer.apply_chat_template
 
-        self.prompts = []
+        self.raw_prompts = []
+        self.processed_prompts = []
 
-        def preprocess_data(
-            data, input_template=None, input_key="input", apply_chat_template=None
-        ) -> str:
+        def preprocess_data(data, input_key="input", apply_chat_template=None) -> str:
             if apply_chat_template:
                 prompt = apply_chat_template(
-                    data[input_key], tokenize=False, add_generation_prompt=True
+                    [{"content": data[input_key], "role": "user"}],
+                    tokenize=False,
+                    add_generation_prompt=True,
                 )
             else:
                 prompt = data[input_key]
-                if input_template:
-                    prompt = input_template.format(prompt)
-            return prompt
+                # if input_template:
+                #     prompt = input_template.format(prompt)
+            return data[input_key], prompt
 
         for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
-            prompt = preprocess_data(
-                data, input_template, input_key, apply_chat_template
+            prompt, processed_prompt = preprocess_data(
+                data, input_key, apply_chat_template
             )
-            self.prompts.append(prompt)
+            self.processed_prompts.append(processed_prompt)
+            self.raw_prompts.append(prompt)
 
     def __len__(self):
-        length = len(self.prompts)
-        return length * self.n_samples_per_prompt
+        return len(self.raw_prompts)
 
     def __getitem__(self, idx):
-        return self.prompts[idx // self.n_samples_per_prompt]
+        return self.processed_prompts[idx], self.raw_prompts[idx]
 
 
 class PreferenceDataset(Dataset):
@@ -274,7 +272,7 @@ class PreferenceDataset(Dataset):
         self.prompt_max_length = prompt_max_length
         self.generate_max_length = generate_max_length
 
-        apply_chat_template = getattr(self.strategy.args, "apply_chat_template", True)
+        apply_chat_template = getattr(self.strategy.args, "apply_chat_template", False)
         if apply_chat_template:
             strategy.print("Applying chat template...")
             apply_chat_template = self.tokenizer.apply_chat_template
@@ -287,7 +285,7 @@ class PreferenceDataset(Dataset):
         self.strategy.print("Constructing preference dataset...")
 
         for data in tqdm(buffer, disable=not self.strategy.is_rank_0()):
-            prompt, chosen, rejected = _preprocess_data(
+            prompt, chosen, rejected = _preprocess_preference_data(
                 data,
                 apply_chat_template,
             )

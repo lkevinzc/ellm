@@ -584,3 +584,14 @@ class DeepspeedStrategy(ABC):
             load_lr_scheduler_states=load_lr_scheduler_states,
             load_module_only=load_module_only,
         )
+
+
+class DummyStrategy:
+    def __init__(self, args) -> None:
+        self.args = args
+
+    def print(self, *args):
+        print(*args)
+
+    def is_rank_0(self):
+        return True

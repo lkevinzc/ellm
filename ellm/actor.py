@@ -4,6 +4,8 @@ from warnings import warn
 import llm_blender
 import vllm
 
+from ellm.types import PreferenceData
+
 
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
@@ -32,7 +34,7 @@ class Actor:
 
         self.exploration = exploration
 
-    def step(self, prompts: List[str]):
+    def step(self, prompts: List[str]) -> List[PreferenceData]:
         """Step the actor.
 
         Given a prompt x, K responses {y_1, ..., y_K} are sample from the behavior LLM pi_beta,
@@ -44,10 +46,10 @@ class Actor:
         """
         # step 1. generate
         outputs = self.llm.generate(prompts, sampling_params=self.sampling_params)
-        candidates = []
+        candidates = {}
         for i in range(len(outputs)):
             # for each prompt
-            candidates.append([])
+            candidates[i] = []
             for k in range(self.sampling_params.n):
                 # for each response
                 candidates[i].append(outputs[i].outputs[k].text)
@@ -59,6 +61,19 @@ class Actor:
 
         # step 3. query for oracle preference
         feedback = self.blender.compare(
-            prompts, [c[0] for c in candidates], [c[1] for c in candidates]
+            prompts,
+            [candidates[i][0] for i in range(len(prompts))],
+            [candidates[i][1] for i in range(len(prompts))],
         )
-        return candidates, feedback
+        chosen = 1 - feedback
+        rejected = 1 - chosen
+        preference_data = [
+            PreferenceData(
+                prompt=prompts[i],
+                chosen_response=candidates[i][chosen[i]],
+                rejected_response=candidates[i][rejected[i]],
+            )
+            for i in range(len(prompts))
+        ]
+
+        return preference_data

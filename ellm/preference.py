@@ -35,8 +35,6 @@ class PreferenceCollector:
 
     @torch.no_grad()
     def __call__(self, prompts: Union[str, List[str]]) -> List[PreferenceData]:
-        device = torch.cuda.current_device()
-
         # generate response & get feedback
         st_time = time.time()
         rank = torch.distributed.get_rank()
