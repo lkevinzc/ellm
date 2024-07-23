@@ -52,7 +52,7 @@ class DAPLearner(LearnerBase):
         input_ids, att_masks, prompt_id_lens = self.concatenated_inputs(
             chosen_ids, c_mask, rejected_ids, r_mask, prompt_id_lens
         )
-        output = model(input_ids, attention_mask=att_masks, return_output=True)
+        output = model(input_ids, attention_mask=att_masks)
         all_logits = output["logits"]
         all_logps = self.get_batch_logps(
             all_logits,

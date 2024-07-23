@@ -59,8 +59,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             use_fast=not args.disable_fast_tokenizer,
         )
 
-        # tokenizer.apply_chat_template([{"content": "Hi!", "role": "user"}])
-
         if args.gradient_checkpointing:
             model.gradient_checkpointing_enable(
                 gradient_checkpointing_kwargs={
@@ -68,7 +66,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 }
             )
 
-        optim = strategy.create_optimizer(
+        optimizer = strategy.create_optimizer(
             model, lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=args.l2
         )
 
@@ -103,15 +101,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
         scheduler = get_scheduler(
             "cosine_with_min_lr",
-            optim,
+            optimizer,
             num_warmup_steps=math.ceil(max_steps * 0.03),
             num_training_steps=max_steps,
             scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1},
         )
 
         # prepare models/optimizers...
-        (self.model, self.optim, self.scheduler) = strategy.prepare(
-            (model, optim, scheduler),
+        (self.model, self.optimizer, self.scheduler) = strategy.prepare(
+            (model, optimizer, scheduler),
             is_rlhf=True,
         )
 
@@ -151,7 +149,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # Log summary of the learner
         strategy.print(self.model)
-        strategy.print(self.optim)
+        strategy.print(self.optimizer)
         strategy.print(self.scheduler)
         strategy.pprint(vars(args))
 
@@ -160,6 +158,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         update_interval = self.args.rollout_batch_size // (
             self.strategy.world_size * self.args.micro_rollout_batch_size
         )
+        self.strategy.print(f"Update interval = {update_interval}")
         steps = 1
 
         for episode in range(self.args.num_episodes):
@@ -201,7 +200,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pin_memory=True,
             collate_fn=dataset.collate_fn,
         )
-        for epoch in self.args.max_epochs:
+        for epoch in range(self.args.max_epochs):
             dataloader = tqdm(
                 dataloader,
                 desc=f"Train epoch [{epoch + 1}/{self.args.max_epochs}]",
@@ -209,6 +208,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
             acc_mean = 0
             loss_mean = 0
+            self.model.train()
             for data in dataloader:
                 infos = self.learning_step(data)
 

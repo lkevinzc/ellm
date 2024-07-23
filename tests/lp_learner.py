@@ -90,6 +90,7 @@ class DatasetActor:
         except StopIteration:
             self.data_iter = iter(self.train_dataloader)
             data = next(self.data_iter)
+        print(f"yield data of length {len(data)}")
         return data
 
 
@@ -108,7 +109,7 @@ def main(args):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(DatasetActor, args, dummy_strategy), label=label
+                lp.CourierNode(DatasetActor, args, dummy_strategy, i, 4), label=label
             )
         )
     _gpu_offset = 0
@@ -197,8 +198,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_ckpt_mem", type=int, default=1000)  # 1000GB
 
     parser.add_argument("--num_episodes", type=int, default=1)
-    parser.add_argument("--micro_train_batch_size", type=int, default=8)
-    parser.add_argument("--train_batch_size", type=int, default=128)
+    parser.add_argument("--micro_train_batch_size", type=int, default=1)
+    parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--rollout_batch_size", type=int, default=512)
     parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
@@ -257,11 +258,11 @@ if __name__ == "__main__":
     parser.add_argument("--use_wandb", type=str, default=None)
     parser.add_argument("--wandb_org", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
-    parser.add_argument("--wandb_project", type=str, default="openrlhf_train_ppo")
+    parser.add_argument("--wandb_project", type=str, default="ellm_simpo")
     parser.add_argument(
         "--wandb_run_name",
         type=str,
-        default="sea_%s" % datetime.now().strftime("%m%dT%H:%M"),
+        default="lp_learner_test_%s" % datetime.now().strftime("%m%dT%H:%M"),
     )
 
     args = parser.parse_args()
@@ -272,5 +273,5 @@ if __name__ == "__main__":
     main(args)
 
 """
-python tests/lp_learner.py --apply_chat_template --chosen_key chosen --rejected_key rejected --micro_train_batch_size 2 --input_key context_messages
+python tests/lp_learner.py --pretrain google/gemma-2b --apply_chat_template --chosen_key chosen --rejected_key rejected --micro_train_batch_size 1 --input_key context_messages --flash_attn --gradient_checkpointing --use_wandb True
 """

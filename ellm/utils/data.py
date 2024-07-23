@@ -374,8 +374,8 @@ class PreferenceDataset(Dataset):
             chosen_ids, side=padding_side, value=self.tokenizer.pad_token_id
         )
         chosen_masks = _zero_pad_sequences(chosen_masks, side=padding_side)
-        reject_ids = _zero_pad_sequences(
-            reject_ids, side=padding_side, value=self.tokenizer.pad_token_id
+        rejected_ids = _zero_pad_sequences(
+            rejected_ids, side=padding_side, value=self.tokenizer.pad_token_id
         )
-        rejects_masks = _zero_pad_sequences(rejects_masks, side=padding_side)
-        return chosen_ids, chosen_masks, reject_ids, rejects_masks, extras
+        rejected_masks = _zero_pad_sequences(rejected_masks, side=padding_side)
+        return chosen_ids, chosen_masks, rejected_ids, rejected_masks, extras

@@ -493,15 +493,15 @@ class DeepspeedStrategy(ABC):
 
     def print(self, *msg):
         if self.is_rank_0():
-            print("\n\n")
+            print("\n")
             print(*msg)
-            print("\n\n")
+            print("\n")
 
     def pprint(self, *msg):
         if self.is_rank_0():
-            print("\n\n")
+            print("\n")
             pprint(*msg)
-            print("\n\n")
+            print("\n")
 
     def is_rank_0(self) -> bool:
         return dist.get_rank() == 0
