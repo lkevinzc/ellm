@@ -2,10 +2,6 @@ import os
 import socket
 
 
-def _get_fq_hostname() -> str:
-    return socket.getfqdn(socket.gethostname())
-
-
 def get_free_port():
     sock = socket.socket()
     sock.bind(("", 0))

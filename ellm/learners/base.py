@@ -1,19 +1,27 @@
 import abc
 import math
 import os
+import socket
 from collections import deque
+from typing import List
+from warnings import warn
 
+import deepspeed
 import launchpad as lp
 import torch
+import vllm
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 from transformers.trainer import get_scheduler
 
+from ellm.actor import Actor
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
 from ellm.types import PreferenceData
 from ellm.utils.data import (PreferenceDataset, PromptDataset,
                              blending_datasets, get_tokenizer)
+from ellm.utils.distributed import (init_process_group,
+                                    node_ip_address_from_perspective)
 from ellm.utils.launcher import DistributedLauncher
 from ellm.utils.setup import get_strategy
 
@@ -38,7 +46,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.args = args
         self.actors = actors
 
-    def _init(self, args, actors) -> None:
+    def _init(self, args, actors: List[Actor]) -> None:
         strategy = get_strategy(args)
         strategy.setup_distributed()
 
@@ -155,6 +163,45 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         strategy.print(self.scheduler)
         strategy.pprint(vars(args))
 
+        # prepare parameter syncing to actors (reference to openrlhf)
+        #
+        # For ZeRO-1/2:
+        #   1. Broadcast parameters from rank 0 to all vllm engines
+        # For ZeRO-3:
+        #   1. AllGather parameters to rank 0
+        #   2. Broadcast parameters from rank 0 to all vllm engines
+        if strategy.is_rank_0:
+            master_addr = node_ip_address_from_perspective()
+            with socket.socket() as sock:
+                sock.bind(("", 0))
+                master_port = sock.getsockname()[1]
+            world_size = len(actors) + 1
+            backend = "nccl"
+            if vllm.__version__ > "0.4.2":
+                backend = "gloo"
+                warn(f"Using gloo backend for vLLM version {vllm.__version__}")
+            futs = [
+                actor.futures.init_process_group(
+                    master_addr,
+                    master_port,
+                    i + 1,
+                    world_size,
+                    f"some_group_name_{i+1}",
+                    backend=backend,
+                )
+                for i, actor in enumerate(actors)
+            ]
+            self._model_update_group = init_process_group(
+                backend=backend,
+                init_method=f"tcp://{master_addr}:{master_port}",
+                world_size=world_size,
+                rank=0,
+                group_name="some_group_name_0",
+            )
+            _ = [fut.result() for fut in futs]
+
+        torch.distributed.barrier()
+
     def run(self):
         self._init(self.args, self.actors)
         update_interval = self.args.rollout_batch_size // (
@@ -189,6 +236,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     torch.cuda.empty_cache()
                     self.preference_learning(steps // update_interval)
                     torch.cuda.empty_cache()
+                    torch.distributed.barrier()
+                    self._broadcast_to_vllm()
 
                 progress_bar.update()
                 steps += 1
@@ -196,6 +245,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         lp.stop()
 
     def preference_learning(self, update_step):
+        torch.distributed.barrier()
         dataset = PreferenceDataset(
             self.pi_buffer,
             self.tokenizer,
@@ -280,3 +330,36 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         #         args.max_ckpt_num,
         #         args.max_ckpt_mem,
         #     )
+
+    def _broadcast_to_vllm(self):
+        model = self.model.model.module
+        count, num_params = 0, len(list(model.named_parameters()))
+        for name, param in model.named_parameters():
+            count += 1  # empty_cache at last param
+
+            # Fire all vllm engines for broadcast
+            if self.strategy.is_rank_0():
+                shape = (
+                    param.shape
+                    if self.strategy.args.zero_stage != 3
+                    else param.ds_shape
+                )
+                futs = [
+                    actor.futures.update_weight(
+                        name,
+                        dtype=param.dtype,
+                        shape=shape,
+                        empty_cache=count == num_params,
+                    )
+                    for actor in self.actors
+                ]
+
+            # For ZeRO-3, allgather sharded parameter and broadcast to all vllm engines by rank 0
+            with deepspeed.zero.GatheredParameters(
+                [param], enabled=self.strategy.args.zero_stage == 3
+            ):
+                if self.strategy.is_rank_0():
+                    torch.distributed.broadcast(
+                        param.data, 0, group=self._model_update_group
+                    )
+                    _ = [fut.result() for fut in futs]

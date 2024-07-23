@@ -5,6 +5,7 @@ import llm_blender
 import vllm
 
 from ellm.types import PreferenceData
+from ellm.utils.distributed import WorkerWrap
 
 
 class Actor:
@@ -22,6 +23,7 @@ class Actor:
             warn(
                 f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
             )
+        vllm.worker.worker.Worker = WorkerWrap
 
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
@@ -77,3 +79,22 @@ class Actor:
         ]
 
         return preference_data
+
+    def init_process_group(
+        self, master_address, master_port, rank_offset, world_size, group_name, backend
+    ):
+        return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+            master_address, master_port, rank_offset, world_size, group_name, backend
+        )
+
+    def update_weight(self, name, dtype, shape, empty_cache=False):
+        self._stop_remote_worker_execution_loop()
+        return self.llm.llm_engine.model_executor.driver_worker.update_weight(
+            name, dtype, shape, empty_cache
+        )
+
+    def _stop_remote_worker_execution_loop(self):
+        # Fix error for using 2 communication group
+        # https://github.com/vllm-project/vllm/commit/eb6d3c264d0cd8e44dec16bca7947fbe96415ce9#diff-e1ad69e38e033accddfa5480ec808c4740eb39244d1ef51cc3407e20dde8cfd4
+        if self.__vllm_version__ > "0.4.2":
+            self.llm.llm_engine.model_executor.stop_remote_worker_execution_loop()
