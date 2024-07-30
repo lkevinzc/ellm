@@ -62,6 +62,10 @@ def init_process_group(
 
     _world.pg_group_ranks[pg] = {i: i for i in range(world_size)}
 
+    print(
+        f"init_process_group: init_method={init_method}, backend={backend}, ",
+        f"rank={rank}, world_size={world_size}, group_name={group_name}",
+    )
     return pg
 
 
@@ -95,7 +99,7 @@ class WorkerWrap(Worker):
         )
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
-        """Broadcast weight to all vllm workers from source rank 0 (actor model)"""
+        """Broadcast weight to all vllm workers from source rank 0 (learner model)"""
         if torch.distributed.get_rank() == 0:
             print(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
 
