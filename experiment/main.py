@@ -1,5 +1,4 @@
 import argparse
-from datetime import datetime
 
 import launchpad as lp
 import vllm
@@ -121,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--num_samples", type=int, default=2)
 
-    parser.add_argument("--save_path", type=str, default="./ckpt")
+    parser.add_argument("--save_path", type=str, default="./output")
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)
     parser.add_argument("--eval_steps", type=int, default=-1)
@@ -185,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)
 
-    # wandb pamameters
+    # wandb parameters
     parser.add_argument("--use_wandb", type=str, default=None)
     parser.add_argument("--wandb_org", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
@@ -193,7 +192,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_run_name",
         type=str,
-        default="lp_learner_test_%s" % datetime.now().strftime("%m%dT%H:%M"),
+        default="online_SimPO",
     )
 
     args = parser.parse_args()

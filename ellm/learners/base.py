@@ -3,11 +3,13 @@ import math
 import os
 import socket
 from collections import deque
+from datetime import datetime
 from typing import List
 from warnings import warn
 
 import deepspeed
 import launchpad as lp
+import pandas as pd
 import torch
 import vllm
 from torch.utils.data import DataLoader, DistributedSampler
@@ -82,13 +84,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare datasets
-        prompts_data = blending_datasets(
+        prompts_data, eval_prompts_data = blending_datasets(
             args.prompt_data,
             args.prompt_data_probs,
             strategy,
             args.seed,
             max_count=args.max_samples,
-            return_eval=False,
+            return_eval=True,
         )
         prompts_data = prompts_data.select(
             range(min(args.max_samples, len(prompts_data)))
@@ -99,13 +101,29 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         prompts_dataloader = strategy.setup_dataloader(
             prompts_dataset, args.micro_rollout_batch_size, True, True
         )
+        strategy.print("Prompt dataset example:")
+        strategy.print("Processed:", prompts_dataset[0][0])
+        strategy.print("Raw:", prompts_dataset[0][1])
+        strategy.print("Prompt dataloader len:", len(prompts_dataloader))
+
+        if strategy.is_rank_0:
+            eval_prompts_dataset = PromptDataset(
+                eval_prompts_data,
+                tokenizer,
+                strategy,
+                input_template=args.input_template,
+            )
+            self.eval_prompts_dataloader = DataLoader(
+                eval_prompts_dataset,
+                batch_size=args.micro_rollout_batch_size,
+                shuffle=False,
+                drop_last=False,
+                pin_memory=True,
+            )
 
         # configure scheduler
         num_update_steps_per_episodes = (
-            int(
-                len(prompts_dataloader)
-                * (args.micro_rollout_batch_size / args.micro_train_batch_size)
-            )
+            int(len(prompts_dataloader) / args.micro_train_batch_size)
             * args.max_epochs
             // strategy.accumulated_gradient
         )
@@ -116,6 +134,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             num_warmup_steps=math.ceil(max_steps * 0.03),
             num_training_steps=max_steps,
             scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1},
+        )
+        strategy.print(
+            f"num_update_steps_per_episodes={num_update_steps_per_episodes}; max_steps={max_steps}"
         )
 
         # prepare models/optimizers...
@@ -128,7 +149,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if args.load_checkpoint:
             strategy.print("Load checkpoint: ", args.save_path)
 
-        os.makedirs(args.save_path, exist_ok=True)
+        exp_name = args.wandb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M")
+        self.save_path = os.path.join(args.save_path, exp_name)
+        os.makedirs(self.save_path, exist_ok=True)
 
         # logger
         self._wandb = None
@@ -142,7 +165,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 entity=args.wandb_org,
                 project=args.wandb_project,
                 group=args.wandb_group,
-                name=args.wandb_run_name,
+                name=exp_name,
                 config=args.__dict__,
                 reinit=True,
             )
@@ -156,7 +179,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.strategy = strategy
         self.tokenizer = tokenizer
         self.prompts_dataloader = prompts_dataloader
-        self.update_step = 0
+        self.global_step = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -211,6 +234,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.strategy.print(f"Update interval = {update_interval}")
         steps = 1
 
+        self.actor_info = {}
+
         for episode in range(self.args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(episode)
@@ -222,7 +247,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
 
             for processed_prompts, raw_prompts in self.prompts_dataloader:
-                preference_data = self.preference_collector(processed_prompts)
+                preference_data, self.actor_info = self.preference_collector(
+                    processed_prompts
+                )
                 for i, pref in enumerate(preference_data):
                     # Replace with raw prompts instead of templated ones
                     new_pref = PreferenceData(
@@ -231,13 +258,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         rejected_response=pref.rejected_response,
                     )
                     self.pi_buffer.append(new_pref)
+                    # TODO aggregate to master for reward model training.
                     self.r_buffer.append(new_pref)
 
                 if steps % update_interval == 0:
-                    torch.cuda.empty_cache()
                     self.preference_learning(steps // update_interval)
-                    torch.cuda.empty_cache()
-                    torch.distributed.barrier()
+                    self.pi_buffer.clear()
                     self._broadcast_to_vllm()
 
                 progress_bar.update()
@@ -245,7 +271,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         lp.stop()
 
-    def preference_learning(self, update_step):
+    def preference_learning(self, learning_round):
+        torch.cuda.empty_cache()
         torch.distributed.barrier()
         dataset = PreferenceDataset(
             self.pi_buffer,
@@ -263,9 +290,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             collate_fn=dataset.collate_fn,
         )
         for epoch in range(self.args.max_epochs):
-            dataloader = tqdm(
-                dataloader,
-                desc=f"Train epoch [{epoch + 1}/{self.args.max_epochs}]",
+            step_bar = tqdm(
+                range(dataloader.__len__()),
+                desc="Train step of epoch %d" % epoch,
                 disable=not self.strategy.is_rank_0(),
             )
             acc_mean = 0
@@ -283,43 +310,56 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     + 0.1 * (chosen_reward > rejected_reward).float().mean().item()
                 )
                 loss_mean = loss_mean * 0.9 + 0.1 * loss.item()
-                logs_dict = {
+                train_info = {
+                    "epoch": epoch + 1,
                     "chosen_reward": chosen_reward.mean().item(),
                     "rejected_reward": rejected_reward.mean().item(),
                     "acc_mean": acc_mean,
                     "loss_mean": loss_mean,
+                    "learning_round": learning_round,
+                }
+                train_info = {
+                    "train/%s" % k: v
+                    for k, v in {**train_info, "global_step": self.global_step}.items()
                 }
 
-                self.update_step += 1
                 self.save_logs_and_checkpoints(
                     self.args,
-                    self.update_step,
-                    logs_dict,
+                    self.global_step,
+                    train_info,
                 )
+
+                step_bar.update()
+                self.global_step += 1
+
+        torch.cuda.empty_cache()
+        torch.distributed.barrier()
+        return train_info
 
     @abc.abstractmethod
     def learning_step(self, data):
         """Preference learning step."""
 
-    def save_logs_and_checkpoints(self, args, global_step, logs_dict={}):
+    def save_logs_and_checkpoints(self, args, global_step, train_info):
         # logs
-        if global_step % args.logging_steps == 0:
+        if (
+            global_step % args.logging_steps == 0
+            and global_step % self.strategy.accumulated_gradient == 0
+        ):
+            logs_dict = {
+                **train_info,
+                **self.actor_info,
+            }
             logs_dict = self.strategy.all_reduce(logs_dict)
 
-            if (
-                self._wandb is not None
-                and self.strategy.is_rank_0()
-                and global_step % self.strategy.accumulated_gradient == 0
-            ):
-                logs = {
-                    "train/%s" % k: v
-                    for k, v in {**logs_dict, "global_step": global_step}.items()
-                }
-                self._wandb.log(logs)
+            if self.strategy.is_rank_0():
+                self.strategy.pprint(logs_dict)
+                if self._wandb is not None:
+                    self._wandb.log(logs_dict)
 
         # eval
-        # if global_step % args.eval_steps == 0:
-        #     self.evaluate(self.eval_dataloader, global_step)
+        if global_step % args.eval_steps == 0 and self.strategy.is_rank_0():
+            self.gen_evaluation(self.eval_prompts_dataloader, global_step)
         # # save ckpt
         # # TODO: save best model on dev, use loss/perplexity on whole dev dataset as metric
         # if global_step % args.save_steps == 0:
@@ -331,6 +371,23 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         #         args.max_ckpt_num,
         #         args.max_ckpt_mem,
         #     )
+
+    def gen_evaluation(self, dataloader, global_step):
+        """Generate evaluation results."""
+        print("Start generating evaluation responses")
+        results = []
+        futs = []
+        for i, prompts in enumerate(dataloader):
+            actor = self.actors[i % len(self.actors)]
+            fut = actor.futures.generate(prompts)
+            futs.append(fut)
+            if i % len(self.actors) == len(self.actors) - 1:
+                results.extend([fut.result() for fut in futs])
+                futs.clear()
+        eval_res_path = os.path.join(self.save_path, "eval_results")
+        os.makedirs(eval_res_path, exist_ok=True)
+        pd.to_pickle(results, os.path.join(eval_res_path, f"{global_step}.pkl"))
+        print(f"Saving evaluation results in {eval_res_path} at step {global_step}")
 
     def _broadcast_to_vllm(self):
         model = self.model.model.module

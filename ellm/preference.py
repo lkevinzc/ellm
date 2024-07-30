@@ -1,6 +1,7 @@
 import time
 from typing import List, Union
 
+import numpy as np
 import torch
 
 from ellm.actor import Actor
@@ -40,11 +41,17 @@ class PreferenceCollector:
         rank = torch.distributed.get_rank()
         actor = self.actors[rank % len(self.actors)]
         fut = actor.futures.step(prompts)
-        preference_data = fut.result()
+        preference_data: List[PreferenceData] = fut.result()
         actor_time = time.time() - st_time
 
-        info = {"actor/generate_time": actor_time}
-        if self.logger is not None:
-            self.logger.log(info)
+        info = {
+            "actor/generate_time": actor_time,
+            "actor/chosen_avg_str_len": np.mean(
+                [len(p.chosen_response) for p in preference_data]
+            ),
+            "actor/rejected_avg_str_len": np.mean(
+                [len(p.rejected_response) for p in preference_data]
+            ),
+        }
 
-        return preference_data
+        return preference_data, info

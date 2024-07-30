@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from warnings import warn
 
 import llm_blender
@@ -35,6 +35,17 @@ class Actor:
         self.blender.loadranker("llm-blender/PairRM")
 
         self.exploration = exploration
+
+    def generate(
+        self,
+        prompts: List[str],
+    ):
+        """Generate responses for given prompts."""
+        sampling_params = vllm.SamplingParams(
+            temperature=0.0, top_p=0.95, max_tokens=200
+        )  # TODO hard-code first
+        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
+        return [output.outputs[0].text.strip() for output in outputs]
 
     def step(self, prompts: List[str]) -> List[PreferenceData]:
         """Step the actor.
