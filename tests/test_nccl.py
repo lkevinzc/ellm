@@ -7,20 +7,10 @@ import torch.distributed as dist
 from launchpad.nodes.python import local_multi_processing
 
 from ellm.utils.distributed import (init_process_group,
-                                    node_ip_address_from_perspective)
+                                    node_ip_address_from_perspective,
+                                    torch_type_codec)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# !!! IMPORTANT NOTE !!!(liuzc)
-# torch.dtype cannot be passed through lp's rpc due to segmentation fault; use string instead.
-torch_type_decode = {
-    "bf16": torch.bfloat16,
-    "f32": torch.float32,
-}
-torch_type_encode = {
-    torch.bfloat16: "bf16",
-    torch.float32: "f32",
-}
 
 
 def init_default(rank, size):
@@ -58,7 +48,7 @@ class Consumer:
 
     def update_data(self, name, dtype, shape):
         print("receiving...")
-        weight = torch.empty(shape, dtype=torch_type_decode[dtype], device=device)
+        weight = torch.empty(shape, dtype=torch_type_codec(dtype), device=device)
         torch.distributed.broadcast(weight, 0, group=self._group)
         self.data = weight
         print(weight)
@@ -105,7 +95,7 @@ class Producer:
         futs = [
             c.futures.update_data(
                 "data",
-                dtype=torch_type_encode[self.data.dtype],
+                dtype=torch_type_codec(self.data.dtype),
                 shape=self.data.shape,
             )
             for c in self.consumers

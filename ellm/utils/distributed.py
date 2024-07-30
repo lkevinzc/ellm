@@ -1,3 +1,5 @@
+import errno
+import socket
 from datetime import timedelta
 from typing import Any, Optional, Union
 
@@ -7,6 +9,26 @@ from torch.distributed.distributed_c10d import (Backend, PrefixStore, Store,
                                                 _world, default_pg_timeout,
                                                 rendezvous)
 from vllm.worker.worker import Worker
+
+# !!! IMPORTANT NOTE !!!(liuzc)
+# torch.dtype cannot be passed through lp's rpc due to segmentation fault; use string instead.
+_torch_type_decode = {
+    "bf16": torch.bfloat16,
+    "f32": torch.float32,
+}
+_torch_type_encode = {
+    torch.bfloat16: "bf16",
+    torch.float32: "f32",
+}
+
+
+def torch_type_codec(dtype_or_str):
+    if isinstance(dtype_or_str, torch.dtype):
+        return _torch_type_encode[dtype_or_str]
+    elif isinstance(dtype_or_str, str):
+        return _torch_type_decode[dtype_or_str]
+    else:
+        raise ValueError(f"Invalid dtype or str: {dtype_or_str}")
 
 
 # Copy from pytorch to allow creating multiple main groups.
@@ -100,6 +122,8 @@ class WorkerWrap(Worker):
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
         """Broadcast weight to all vllm workers from source rank 0 (learner model)"""
+        dtype = torch_type_codec(dtype)
+
         if torch.distributed.get_rank() == 0:
             print(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
 
@@ -115,10 +139,6 @@ class WorkerWrap(Worker):
         # TODO: should we empty cache if all weights have updated?
         # if empty_cache:
         #     torch.cuda.empty_cache()
-
-
-import errno
-import socket
 
 
 def node_ip_address_from_perspective(address: str = "8.8.8.8:53"):
