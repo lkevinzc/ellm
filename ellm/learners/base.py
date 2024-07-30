@@ -377,9 +377,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         print("Start generating evaluation responses")
         results = []
         futs = []
-        for i, prompts in enumerate(dataloader):
+        for i, (processed_prompts, _) in enumerate(dataloader):
             actor = self.actors[i % len(self.actors)]
-            fut = actor.futures.generate(prompts)
+            fut = actor.futures.generate(processed_prompts)
             futs.append(fut)
             if i % len(self.actors) == len(self.actors) - 1:
                 results.extend([fut.result() for fut in futs])
