@@ -14,10 +14,12 @@ from vllm.worker.worker import Worker
 # torch.dtype cannot be passed through lp's rpc due to segmentation fault; use string instead.
 _torch_type_decode = {
     "bf16": torch.bfloat16,
+    "f16": torch.float16,
     "f32": torch.float32,
 }
 _torch_type_encode = {
     torch.bfloat16: "bf16",
+    torch.float16: "f16",
     torch.float32: "f32",
 }
 
