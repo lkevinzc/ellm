@@ -36,16 +36,25 @@ class Actor:
 
         self.exploration = exploration
 
-    def generate(
+    def generate_and_evaluate(
         self,
         prompts: List[str],
+        references: List[str] = None,
     ):
         """Generate responses for given prompts."""
         sampling_params = vllm.SamplingParams(
             temperature=0.0, top_p=0.95, max_tokens=200
         )  # TODO hard-code first
         outputs = self.llm.generate(prompts, sampling_params=sampling_params)
-        return [output.outputs[0].text.strip() for output in outputs]
+        responses = [output.outputs[0].text.strip() for output in outputs]
+        won = None
+        if references is not None:
+            won = self.blender.compare(
+                prompts,
+                responses,
+                references,
+            )
+        return responses, won
 
     def step(self, prompts: List[str]) -> List[PreferenceData]:
         """Step the actor.
@@ -65,7 +74,7 @@ class Actor:
             candidates[i] = []
             for k in range(self.sampling_params.n):
                 # for each response
-                candidates[i].append(outputs[i].outputs[k].text)
+                candidates[i].append(outputs[i].outputs[k].text.strip())
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
