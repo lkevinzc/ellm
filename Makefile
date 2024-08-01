@@ -1,7 +1,7 @@
 SHELL=/bin/bash
 PROJECT_NAME=ellm
 PROJECT_PATH=ellm/
-LINT_PATHS=${PROJECT_PATH} tests/ experiment/
+LINT_PATHS=${PROJECT_PATH} tests/ experiment/ scripts
 
 check_install = python3 -c "import $(1)" || pip3 install $(1) --upgrade
 check_install_extra = python3 -c "import $(1)" || pip3 install $(2) --upgrade
