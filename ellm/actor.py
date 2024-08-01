@@ -12,6 +12,9 @@ class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
     def __init__(self, vllm_args, sampling_params, exploration=None) -> None:
+        self.eval_mode = False
+        self.pi_beta_weights = None
+
         # ###################################
         # ####      vLLM Generation      ####
         # ###################################
@@ -41,6 +44,7 @@ class Actor:
         prompts: List[str],
     ):
         """Generate responses for given prompts."""
+        assert self.eval_mode
         sampling_params = vllm.SamplingParams(
             temperature=0.0, top_p=0.95, max_tokens=200
         )  # TODO hard-code first
@@ -57,6 +61,7 @@ class Actor:
         Args:
             prompt: A list of prompt texts.
         """
+        assert not self.eval_mode
         # step 1. generate
         outputs = self.llm.generate(prompts, sampling_params=self.sampling_params)
         candidates = {}
@@ -98,11 +103,23 @@ class Actor:
             master_address, master_port, rank_offset, world_size, group_name, backend
         )
 
-    def update_weight(self, name, dtype, shape, empty_cache=False, update_actor=True):
+    def update_weight(self, name, dtype, shape, empty_cache=False):
         self._stop_remote_worker_execution_loop()
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
             name, dtype, shape, empty_cache
         )
+
+    def notify_eval_start(self):
+        """Temporarily cache the current behavior policy weights to CPU."""
+        self.eval_mode = True
+        self.pi_beta_weights = (
+            self.llm.llm_engine.model_executor.driver_worker.offload_cpu()
+        )
+
+    def notify_eval_done(self):
+        assert self.eval_mode
+        self.llm.llm_engine.model_executor.driver_worker.load_cpu(self.pi_beta_weights)
+        self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):
         # Fix error for using 2 communication group

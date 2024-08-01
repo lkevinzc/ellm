@@ -117,7 +117,8 @@ if __name__ == "__main__":
     )
 
     # Online DAP
-    parser.add_argument("--buffer_clear_interval", type=int, default=1)
+    parser.add_argument("--buffer_clear_every", type=int, default=1)
+    parser.add_argument("--sync_params_every", type=int, default=1)
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)

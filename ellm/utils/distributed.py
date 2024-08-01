@@ -1,9 +1,11 @@
 import errno
 import socket
+import time
 from datetime import timedelta
 from typing import Any, Optional, Union
 
 import torch
+import tree
 from torch.distributed.distributed_c10d import (Backend, PrefixStore, Store,
                                                 _new_process_group_helper,
                                                 _world, default_pg_timeout,
@@ -141,6 +143,24 @@ class WorkerWrap(Worker):
         # TODO: should we empty cache if all weights have updated?
         # if empty_cache:
         #     torch.cuda.empty_cache()
+
+    def offload_cpu(self):
+        print("Start offloading...")
+        st = time.time()
+        param_dict = dict(self.model_runner.model.named_parameters())
+        weights_on_cpu = {}
+        for name, weights in param_dict.items():
+            weights_on_cpu[name] = weights.data.cpu()
+        print(f"Finished offloading in {time.time() - st} seconds")
+        return weights_on_cpu
+
+    def load_cpu(self, weights_on_cpu):
+        print("Start loading from cpu...")
+        st = time.time()
+        self.model_runner.model.load_weights(
+            weights=tree.map_structure(lambda x: x.cuda(), weights_on_cpu).items()
+        )
+        print(f"Finished loading in {time.time() - st} seconds")
 
 
 def node_ip_address_from_perspective(address: str = "8.8.8.8:53"):

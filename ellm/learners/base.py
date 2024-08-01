@@ -268,10 +268,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                 if steps % update_interval == 0:
                     self.preference_learning(steps // update_interval)
-                    self._broadcast_to_vllm()
+                    if (steps // update_interval) % self.args.sync_params_every == 0:
+                        self._broadcast_to_vllm()
 
-                if steps % self.args.buffer_clear_interval == 0:
-                    self.pi_buffer.clear()
+                    if (steps // update_interval) % self.args.buffer_clear_every == 0:
+                        self.pi_buffer.clear()
 
                 progress_bar.update()
                 steps += 1
@@ -352,8 +353,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def save_logs_and_checkpoints(self, args, global_step, train_info):
         # eval
         eval_info = {}
-        if global_step % args.eval_steps == 0 and self.strategy.is_rank_0():
-            eval_info = self.gen_evaluation(self.eval_prompts_dataloader, global_step)
+        if global_step % args.eval_steps == 0:
+            eval_info = self.evaluate(self.eval_prompts_dataloader, global_step)
 
         # logs
         if (
@@ -385,39 +386,50 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         #         args.max_ckpt_mem,
         #     )
 
-    def gen_evaluation(self, dataloader, global_step):
-        """Generate evaluation results."""
+    def evaluate(self, dataloader, global_step):
         self.strategy.print(
             f"Start generating evaluation responses at step {global_step}"
         )
-        prompts = []
-        responses = []
-        futs = []
-        for i, (processed_prompts, _, references) in enumerate(dataloader):
-            prompts.extend(processed_prompts)
+        # 1) Let Actors cache the current behavior policy.
+        if self.strategy.is_rank_0():
+            done = [actor.futures.notify_eval_start() for actor in self.actors]
+            _ = [d.result() for d in done]
 
-            actor = self.actors[i % len(self.actors)]
-            fut = actor.futures.generate(processed_prompts)
-            futs.append(fut)
-            if i % len(self.actors) == len(self.actors) - 1:
-                for fut in futs:
-                    resp = fut.result()
-                    responses.extend(resp)
-                futs.clear()
+        # 2) Push the latest policy for fast vLLM generation.
 
-        eval_res_path = os.path.join(self.save_path, "eval_results")
-        os.makedirs(eval_res_path, exist_ok=True)
-        pd.DataFrame({"prompt": prompts, "response": responses}).to_json(
-            os.path.join(eval_res_path, f"{global_step}.json"),
-            orient="records",
-            lines=True,
-        )
+        # 3) Generate and process results
+        if self.strategy.is_rank_0():
+            prompts = []
+            responses = []
+            futs = []
+            for i, (processed_prompts, _, references) in enumerate(dataloader):
+                prompts.extend(processed_prompts)
+
+                actor = self.actors[i % len(self.actors)]
+                fut = actor.futures.generate(processed_prompts)
+                futs.append(fut)
+                if i % len(self.actors) == len(self.actors) - 1:
+                    for fut in futs:
+                        resp = fut.result()
+                        responses.extend(resp)
+                    futs.clear()
+
+            eval_res_path = os.path.join(self.save_path, "eval_results")
+            os.makedirs(eval_res_path, exist_ok=True)
+            pd.DataFrame({"prompt": prompts, "response": responses}).to_json(
+                os.path.join(eval_res_path, f"{global_step}.json"),
+                orient="records",
+                lines=True,
+            )
+
+        # 4) Recover Actors' original behavior policy.
+        if self.strategy.is_rank_0():
+            done = [actor.futures.notify_eval_done() for actor in self.actors]
+            _ = [d.result() for d in done]
+
         return {}
 
-    def _broadcast_to_vllm(self, update_actor=True):
-        """If update_actor is False, this broadcast is meant for update weights for evaluation. Therefore,
-        the original actor's weights will be temporarily cached to CPU and loaded back after the evaluation.
-        """
+    def _broadcast_to_vllm(self):
         model = self.model.model.module
         count, num_params = 0, len(list(model.named_parameters()))
         for name, param in model.named_parameters():
@@ -436,7 +448,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         dtype=torch_type_codec(param.dtype),
                         shape=shape,
                         empty_cache=count == num_params,
-                        update_actor=update_actor,
                     )
                     for actor in self.actors
                 ]
