@@ -126,8 +126,8 @@ class WorkerWrap(Worker):
         """Broadcast weight to all vllm workers from source rank 0 (learner model)"""
         dtype = torch_type_codec(dtype)
 
-        if torch.distributed.get_rank() == 0:
-            print(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
+        # if torch.distributed.get_rank() == 0:
+        #     print(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
 
         assert (
             dtype == self.model_config.dtype

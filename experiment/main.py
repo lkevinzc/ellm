@@ -23,6 +23,7 @@ def main(args):
     sampling_params = vllm.SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
+        top_k=args.top_k,
         max_tokens=args.generate_max_length,
         seed=0,
         n=args.num_samples,
@@ -103,6 +104,7 @@ if __name__ == "__main__":
         help="sampling probs for datasets",
     )
     parser.add_argument("--max_samples", type=int, default=10000)
+    parser.add_argument("--max_eval", type=int, default=1000)
 
     # Offline preference dataset
     parser.add_argument(
@@ -114,10 +116,14 @@ if __name__ == "__main__":
         "--dataset_probs", type=str, default="1.0", help="sampling probs for datasets"
     )
 
+    # Online DAP
+    parser.add_argument("--buffer_clear_interval", type=int, default=1)
+
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--top_k", type=float, default=-1)
     parser.add_argument("--num_samples", type=int, default=2)
 
     parser.add_argument("--save_path", type=str, default="./output")
@@ -181,6 +187,7 @@ if __name__ == "__main__":
     parser.add_argument("--chosen_key", type=str, default="chosen")
     parser.add_argument("--rejected_key", type=str, default="rejected")
     parser.add_argument("--input_key", type=str, default="input")
+    parser.add_argument("--output_key", type=str, default="output")
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)
 

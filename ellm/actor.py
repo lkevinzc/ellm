@@ -65,7 +65,7 @@ class Actor:
             candidates[i] = []
             for k in range(self.sampling_params.n):
                 # for each response
-                candidates[i].append(outputs[i].outputs[k].text)
+                candidates[i].append(outputs[i].outputs[k].text.strip())
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
@@ -98,7 +98,7 @@ class Actor:
             master_address, master_port, rank_offset, world_size, group_name, backend
         )
 
-    def update_weight(self, name, dtype, shape, empty_cache=False):
+    def update_weight(self, name, dtype, shape, empty_cache=False, update_actor=True):
         self._stop_remote_worker_execution_loop()
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
             name, dtype, shape, empty_cache
