@@ -16,16 +16,13 @@ def main(args):
         "trust_remote_code": True,
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": 0.5,
-        "dtype": "bfloat16",  # TODO(liuzc) check whether to use bfloat
-        "seed": 0,
-        "enable_prefix_caching": True,
+        "dtype": "bfloat16",
     }
     sampling_params = vllm.SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k,
         max_tokens=args.generate_max_length,
-        seed=0,
         n=args.num_samples,
     )
     program = lp.Program("online_dap")
@@ -169,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--zero_stage", type=int, default=3)
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--ref_offload", action="store_true", default=False)
-    parser.add_argument("--learning_rate", type=float, default=1e-6)
+    parser.add_argument("--learning_rate", type=float, default=5e-7)
     parser.add_argument("--zpg", type=int, default=1, help="ZeRO++ max partition size")
     parser.add_argument("--adam_offload", action="store_true", default=False)
     parser.add_argument("--flash_attn", action="store_true", default=False)

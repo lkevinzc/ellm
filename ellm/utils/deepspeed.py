@@ -88,7 +88,7 @@ def get_eval_ds_config(
         },
     }
     return {
-        "steps_per_print": 100,
+        "steps_per_print": 1000,
         "zero_optimization": zero_opt_dict,
         "bf16": {
             "enabled": bf16,
@@ -490,6 +490,25 @@ class DeepspeedStrategy(ABC):
             ]
             dist.all_gather(ret, data.to(torch.cuda.current_device()))
             return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
+
+    def broadcast(self, data):
+        if isinstance(data, dict):
+            ret = {}
+            for k, v in data.items():
+                ret[k] = self.broadcast(v)
+            return ret
+        else:
+            is_tensor = True
+            if not isinstance(data, torch.Tensor):
+                data = torch.Tensor([data])
+                is_tensor = False
+            is_cpu_tensor = data.device.type == "cpu"
+            if is_cpu_tensor:
+                data = data.to(torch.cuda.current_device())
+            dist.broadcast(data, 0)
+            if is_cpu_tensor:
+                data = data.cpu()
+            return data.item() if not is_tensor else data
 
     def print(self, *msg):
         if self.is_rank_0():

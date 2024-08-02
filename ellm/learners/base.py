@@ -12,6 +12,7 @@ import launchpad as lp
 import numpy as np
 import pandas as pd
 import torch
+import torch.distributed as dist
 import vllm
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
@@ -123,13 +124,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 drop_last=False,
                 pin_memory=True,
             )
+            # self.sample_eval_indices = np.random.choice(len(eval_prompts_dataset), 10)
 
         # configure scheduler
-        num_update_steps_per_episodes = (
-            int(len(prompts_dataloader) / args.micro_train_batch_size)
-            * args.max_epochs
-            // strategy.accumulated_gradient
-        )
+        num_update_steps_per_episodes = int(
+            len(prompts_dataset) // args.train_batch_size
+        )  # FIXME : the calculated number is 2, with len(prompts_dataloader)=19, which is very wrong.
         max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
         scheduler = get_scheduler(
             "cosine_with_min_lr",
@@ -185,6 +185,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         self.global_step = 0
         self.pi_beta_version = 0
+        self.update_step = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -229,7 +230,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
             _ = [fut.result() for fut in futs]
 
-        torch.distributed.barrier()
+        dist.barrier()
 
     def run(self):
         self._init(self.args, self.actors)
@@ -240,6 +241,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         steps = 1
 
         self.actor_info = {}
+
+        self.save_logs_and_checkpoints(
+            self.args,
+            self.update_step,
+            {},
+        )
 
         for episode in range(self.args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -267,9 +274,16 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     self.r_buffer.append(new_pref)
 
                 if steps % update_interval == 0:
-                    self.preference_learning(steps // update_interval)
+                    train_info = self.preference_learning(steps // update_interval)
+
+                    self.save_logs_and_checkpoints(
+                        self.args,
+                        self.update_step,
+                        train_info,
+                    )
+
                     if (steps // update_interval) % self.args.sync_params_every == 0:
-                        self._broadcast_to_vllm()
+                        self.sync_params_to_actors()
 
                     if (steps // update_interval) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
@@ -278,11 +292,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 steps += 1
 
         if self.strategy.is_rank_0():
+            self._wandb.finish()
             lp.stop()
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()
-        torch.distributed.barrier()
+        dist.barrier()
         dataset = PreferenceDataset(
             self.pi_buffer,
             self.tokenizer,
@@ -319,57 +334,61 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     + 0.1 * (chosen_reward > rejected_reward).float().mean().item()
                 )
                 loss_mean = loss_mean * 0.9 + 0.1 * loss.item()
-                train_info = {
-                    "epoch": epoch + 1,
-                    "chosen_reward": chosen_reward.mean().item(),
-                    "rejected_reward": rejected_reward.mean().item(),
-                    "acc_mean": acc_mean,
-                    "loss_mean": loss_mean,
-                    "learning_round": learning_round,
-                    "pi_beta_version": self.pi_beta_version,
-                }
-                train_info = {
-                    "train/%s" % k: v
-                    for k, v in {**train_info, "global_step": self.global_step}.items()
-                }
-
-                self.save_logs_and_checkpoints(
-                    self.args,
-                    self.global_step,
-                    train_info,
-                )
 
                 step_bar.update()
                 self.global_step += 1
+                if self.global_step % self.strategy.accumulated_gradient == 0:
+                    self.update_step += 1
 
         torch.cuda.empty_cache()
-        torch.distributed.barrier()
+        dist.barrier()
+
+        train_info = {
+            "epoch": epoch + 1,
+            "chosen_reward": chosen_reward.mean().item(),
+            "rejected_reward": rejected_reward.mean().item(),
+            "acc_mean": acc_mean,
+            "loss_mean": loss_mean,
+            "learning_round": learning_round,
+        }
+        train_info = {
+            "train/%s" % k: v
+            for k, v in {
+                **train_info,
+            }.items()
+        }
         return train_info
 
     @abc.abstractmethod
     def learning_step(self, data):
         """Preference learning step."""
 
-    def save_logs_and_checkpoints(self, args, global_step, train_info):
+    def save_logs_and_checkpoints(self, args, update_steps, train_info):
         # eval
         eval_info = {}
-        if global_step % args.eval_steps == 0:
-            eval_info = self.evaluate(self.eval_prompts_dataloader, global_step)
+        if update_steps % args.eval_steps == 0:
+            eval_info = self.evaluate(self.eval_prompts_dataloader, update_steps)
 
         # logs
-        if (
-            global_step % args.logging_steps == 0
-            and global_step % self.strategy.accumulated_gradient == 0
-        ):
-            logs_dict = {
-                **train_info,
-                **eval_info,
-                **self.actor_info,
+        if update_steps % args.logging_steps == 0:
+            misc_info = {
+                "pi_beta_version": self.pi_beta_version,
+                "global_step": self.global_step,
+                "update_step": self.update_step,
+                "pi_buffer_len": len(self.pi_buffer),
             }
+            misc_info = {
+                "misc/%s" % k: v
+                for k, v in {
+                    **misc_info,
+                }.items()
+            }
+            logs_dict = {**train_info, **eval_info, **self.actor_info, **misc_info}
             logs_dict = self.strategy.all_reduce(logs_dict)
 
             if self.strategy.is_rank_0():
-                self.strategy.pprint(np.random.choice(self.pi_buffer))
+                if self.pi_buffer:
+                    self.strategy.pprint(np.random.choice(self.pi_buffer))
                 self.strategy.pprint(logs_dict)
                 if self._wandb is not None:
                     self._wandb.log(logs_dict)
@@ -386,9 +405,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         #         args.max_ckpt_mem,
         #     )
 
-    def evaluate(self, dataloader, global_step):
+    def evaluate(self, dataloader, update_steps):
         self.strategy.print(
-            f"Start generating evaluation responses at step {global_step}"
+            f"Start generating evaluation responses at step {update_steps}"
         )
         # 1) Let Actors cache the current behavior policy.
         if self.strategy.is_rank_0():
@@ -396,38 +415,53 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             _ = [d.result() for d in done]
 
         # 2) Push the latest policy for fast vLLM generation.
+        dist.barrier()
+        self._broadcast_to_vllm()
 
         # 3) Generate and process results
+
+        win_rate = 0
         if self.strategy.is_rank_0():
             prompts = []
             responses = []
             futs = []
+            wins = []
             for i, (processed_prompts, _, references) in enumerate(dataloader):
                 prompts.extend(processed_prompts)
 
                 actor = self.actors[i % len(self.actors)]
-                fut = actor.futures.generate(processed_prompts)
+                fut = actor.futures.generate_and_maybe_eval(
+                    processed_prompts, references
+                )
                 futs.append(fut)
                 if i % len(self.actors) == len(self.actors) - 1:
                     for fut in futs:
-                        resp = fut.result()
+                        resp, win = fut.result()
                         responses.extend(resp)
+                        wins.extend(win)
                     futs.clear()
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)
             pd.DataFrame({"prompt": prompts, "response": responses}).to_json(
-                os.path.join(eval_res_path, f"{global_step}.json"),
+                os.path.join(eval_res_path, f"{update_steps}.json"),
                 orient="records",
                 lines=True,
             )
+            win_rate = np.mean(wins).item()
+
+        win_rate = self.strategy.broadcast(win_rate)
 
         # 4) Recover Actors' original behavior policy.
         if self.strategy.is_rank_0():
             done = [actor.futures.notify_eval_done() for actor in self.actors]
             _ = [d.result() for d in done]
 
-        return {}
+        return {"eval/rm_win_rate": win_rate}
+
+    def sync_params_to_actors(self):
+        self._broadcast_to_vllm()
+        self.pi_beta_version += 1
 
     def _broadcast_to_vllm(self):
         model = self.model.model.module
@@ -457,7 +491,5 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 [param], enabled=self.strategy.args.zero_stage == 3
             ):
                 if self.strategy.is_rank_0():
-                    torch.distributed.broadcast(
-                        param.data, 0, group=self._model_update_group
-                    )
+                    dist.broadcast(param.data, 0, group=self._model_update_group)
                     _ = [fut.result() for fut in futs]

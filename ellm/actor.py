@@ -1,4 +1,5 @@
-from typing import List, Optional
+import time
+from typing import List
 from warnings import warn
 
 import llm_blender
@@ -30,6 +31,7 @@ class Actor:
 
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
+        self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
 
         # ###################################
         # ####    Oracle Reward Model    ####
@@ -39,17 +41,29 @@ class Actor:
 
         self.exploration = exploration
 
-    def generate(
+    def generate_and_maybe_eval(
         self,
         prompts: List[str],
+        references: List[str] = None,
     ):
-        """Generate responses for given prompts."""
+        """
+        1) Generate responses for given prompts;
+        2) Optionally evaluate the win rate over references based on the oracle reward model.
+        """
         assert self.eval_mode
         sampling_params = vllm.SamplingParams(
             temperature=0.0, top_p=0.95, max_tokens=200
         )  # TODO hard-code first
         outputs = self.llm.generate(prompts, sampling_params=sampling_params)
-        return [output.outputs[0].text.strip() for output in outputs]
+        responses = [output.outputs[0].text.strip() for output in outputs]
+        if references is not None:
+            win = self.blender.compare(
+                prompts,
+                responses,
+                references,
+            )
+            return responses, win
+        return responses, None
 
     def step(self, prompts: List[str]) -> List[PreferenceData]:
         """Step the actor.
@@ -112,13 +126,17 @@ class Actor:
     def notify_eval_start(self):
         """Temporarily cache the current behavior policy weights to CPU."""
         self.eval_mode = True
-        self.pi_beta_weights = (
-            self.llm.llm_engine.model_executor.driver_worker.offload_cpu()
-        )
+        print("Start offloading...")
+        st = time.time()
+        self.cache_model_state = {k: v.cpu() for k, v in self.model.named_parameters()}
+        print(f"Finished offloading in {time.time() - st} seconds")
 
     def notify_eval_done(self):
         assert self.eval_mode
-        self.llm.llm_engine.model_executor.driver_worker.load_cpu(self.pi_beta_weights)
+        print("Start loading from cpu...")
+        st = time.time()
+        self.model.load_state_dict(self.cache_model_state)
+        print(f"Finished loading in {time.time() - st} seconds")
         self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):
