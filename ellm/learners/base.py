@@ -424,15 +424,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if self.strategy.is_rank_0():
             prompts = []
             responses = []
+            references = []
             futs = []
             wins = []
-            for i, (processed_prompts, _, references) in enumerate(dataloader):
+            for i, (processed_prompts, _, refs) in enumerate(dataloader):
                 prompts.extend(processed_prompts)
+                references.extend(refs)
 
                 actor = self.actors[i % len(self.actors)]
-                fut = actor.futures.generate_and_maybe_eval(
-                    processed_prompts, references
-                )
+                fut = actor.futures.generate_and_maybe_eval(processed_prompts, refs)
                 futs.append(fut)
                 if i % len(self.actors) == len(self.actors) - 1:
                     for fut in futs:
@@ -443,7 +443,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)
-            pd.DataFrame({"prompt": prompts, "response": responses}).to_json(
+            pd.DataFrame(
+                {"prompt": prompts, "reference": references, "response": responses}
+            ).to_json(
                 os.path.join(eval_res_path, f"{update_steps}.json"),
                 orient="records",
                 lines=True,
