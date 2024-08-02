@@ -1,3 +1,4 @@
+import time
 from typing import List
 from warnings import warn
 
@@ -12,6 +13,9 @@ class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
     def __init__(self, vllm_args, sampling_params, exploration=None) -> None:
+        self.eval_mode = False
+        self.pi_beta_weights = None
+
         # ###################################
         # ####      vLLM Generation      ####
         # ###################################
@@ -27,6 +31,7 @@ class Actor:
 
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
+        self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
 
         # ###################################
         # ####    Oracle Reward Model    ####
@@ -35,6 +40,30 @@ class Actor:
         self.blender.loadranker("llm-blender/PairRM")
 
         self.exploration = exploration
+
+    def generate_and_maybe_eval(
+        self,
+        prompts: List[str],
+        references: List[str] = None,
+    ):
+        """
+        1) Generate responses for given prompts;
+        2) Optionally evaluate the win rate over references based on the oracle reward model.
+        """
+        assert self.eval_mode
+        sampling_params = vllm.SamplingParams(
+            temperature=0.0, top_p=0.95, max_tokens=200
+        )  # TODO hard-code first
+        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
+        responses = [output.outputs[0].text.strip() for output in outputs]
+        if references is not None:
+            win = self.blender.compare(
+                prompts,
+                responses,
+                references,
+            )
+            return responses, win
+        return responses, None
 
     def step(self, prompts: List[str]) -> List[PreferenceData]:
         """Step the actor.
@@ -46,6 +75,7 @@ class Actor:
         Args:
             prompt: A list of prompt texts.
         """
+        assert not self.eval_mode
         # step 1. generate
         outputs = self.llm.generate(prompts, sampling_params=self.sampling_params)
         candidates = {}
@@ -54,7 +84,7 @@ class Actor:
             candidates[i] = []
             for k in range(self.sampling_params.n):
                 # for each response
-                candidates[i].append(outputs[i].outputs[k].text)
+                candidates[i].append(outputs[i].outputs[k].text.strip())
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
@@ -92,6 +122,22 @@ class Actor:
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
             name, dtype, shape, empty_cache
         )
+
+    def notify_eval_start(self):
+        """Temporarily cache the current behavior policy weights to CPU."""
+        self.eval_mode = True
+        print("Start offloading...")
+        st = time.time()
+        self.cache_model_state = {k: v.cpu() for k, v in self.model.named_parameters()}
+        print(f"Finished offloading in {time.time() - st} seconds")
+
+    def notify_eval_done(self):
+        assert self.eval_mode
+        print("Start loading from cpu...")
+        st = time.time()
+        self.model.load_state_dict(self.cache_model_state)
+        print(f"Finished loading in {time.time() - st} seconds")
+        self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):
         # Fix error for using 2 communication group

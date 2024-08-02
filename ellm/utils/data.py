@@ -40,6 +40,7 @@ def blending_datasets(
     seed=42,
     max_count=5000000,
     return_eval=True,
+    eval_sample=0,
     stopping_strategy="first_exhausted",
 ):
     datasets = datasets.split(",")
@@ -105,7 +106,7 @@ def blending_datasets(
             )  # train will contains eval? TODO
 
         if return_eval:
-            max_count01 = int(max_count * 0.1)
+            max_count01 = min(int(max_count * 0.1), eval_sample)
             if "test" in data:
                 eval_data = data["test"].select(
                     range(min(max_count01, len(data["test"])))
@@ -208,11 +209,13 @@ class PromptDataset(Dataset):
         tokenizer,
         strategy,
         input_template=None,
+        get_reference=False,
     ) -> None:
         super().__init__()
         self.strategy = strategy
         self.tokenizer = tokenizer
         self.input_template = input_template
+        self.get_reference = get_reference
         self.n_samples_per_prompt = getattr(
             self.strategy.args, "n_samples_per_prompt", 1
         )
@@ -221,9 +224,13 @@ class PromptDataset(Dataset):
         apply_chat_template = getattr(self.strategy.args, "apply_chat_template", False)
         if apply_chat_template:
             apply_chat_template = self.tokenizer.apply_chat_template
+        if get_reference:
+            output_key = getattr(self.strategy.args, "output_key", None)
+            assert output_key is not None
 
         self.raw_prompts = []
         self.processed_prompts = []
+        self.references = []
 
         def preprocess_data(data, input_key="input", apply_chat_template=None) -> str:
             if apply_chat_template:
@@ -236,12 +243,20 @@ class PromptDataset(Dataset):
                 prompt = data[input_key]
                 # if input_template:
                 #     prompt = input_template.format(prompt)
+            if get_reference:
+                return data[input_key], prompt, data[output_key]
             return data[input_key], prompt
 
         for data in tqdm(dataset, disable=not self.strategy.is_rank_0()):
-            prompt, processed_prompt = preprocess_data(
-                data, input_key, apply_chat_template
-            )
+            if get_reference:
+                prompt, processed_prompt, reference = preprocess_data(
+                    data, input_key, apply_chat_template
+                )
+                self.references.append(reference)
+            else:
+                prompt, processed_prompt = preprocess_data(
+                    data, input_key, apply_chat_template
+                )
             self.processed_prompts.append(processed_prompt)
             self.raw_prompts.append(prompt)
 
@@ -249,6 +264,12 @@ class PromptDataset(Dataset):
         return len(self.raw_prompts)
 
     def __getitem__(self, idx):
+        if self.get_reference:
+            return (
+                self.processed_prompts[idx],
+                self.raw_prompts[idx],
+                self.references[idx],
+            )
         return self.processed_prompts[idx], self.raw_prompts[idx]
 
 
