@@ -347,6 +347,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "epoch": epoch + 1,
             "chosen_reward": chosen_reward.mean().item(),
             "rejected_reward": rejected_reward.mean().item(),
+            "reward_margin": (chosen_reward - rejected_reward).mean().item(),
             "acc_mean": acc_mean,
             "loss_mean": loss_mean,
             "learning_round": learning_round,
@@ -377,6 +378,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 "update_step": self.update_step,
                 "pi_buffer_len": len(self.pi_buffer),
             }
+            try:
+                last_lr = self.scheduler.get_last_lr()[0]
+                misc_info["lr"] = last_lr
+            except:
+                pass
             misc_info = {
                 "misc/%s" % k: v
                 for k, v in {
@@ -434,7 +440,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 actor = self.actors[i % len(self.actors)]
                 fut = actor.futures.generate_and_maybe_eval(processed_prompts, refs)
                 futs.append(fut)
-                if i % len(self.actors) == len(self.actors) - 1:
+                if len(futs) == len(self.actors) or i == len(dataloader) - 1:
                     for fut in futs:
                         resp, win = fut.result()
                         responses.extend(resp)
