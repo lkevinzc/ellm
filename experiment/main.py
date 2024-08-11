@@ -116,6 +116,7 @@ if __name__ == "__main__":
     # Online DAP
     parser.add_argument("--buffer_clear_every", type=int, default=1)
     parser.add_argument("--sync_params_every", type=int, default=1)
+    parser.add_argument("--dump_reward_buffer", type=bool, action="store_true")
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)

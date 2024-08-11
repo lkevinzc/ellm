@@ -291,6 +291,16 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 progress_bar.update()
                 steps += 1
 
+        if self.args.dump_reward_buffer:  # For debug purpose.
+            if not self.strategy.is_rank_0():
+                dist.gather_object(self.r_buffer)
+            else:
+                gather_r_buffer = [None] * self.strategy.world_size
+                dist.gather_object(self.r_buffer, gather_r_buffer)
+                pd.to_pickle(
+                    gather_r_buffer, os.path.join(self.save_path, "buffer.pkl")
+                )
+
         if self.strategy.is_rank_0():
             self._wandb.finish()
             lp.stop()
