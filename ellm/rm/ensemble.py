@@ -1,5 +1,7 @@
 """Ensemble deep model to capture epistemic uncertainty."""
 
+import pdb
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -84,8 +86,6 @@ class EnsembleModel(nn.Module):
 
         self.apply(init_weights)
 
-        self.init_params = self.parameters()
-
         if activation == "swish":
             self.activation = Swish()
         elif activation == "relu":
@@ -93,8 +93,27 @@ class EnsembleModel(nn.Module):
         else:
             raise ValueError(f"Unknown activation {activation}")
 
+    def get_params(self) -> torch.Tensor:
+        """
+        Returns all the parameters concatenated in a single tensor.
+
+        Returns:
+            parameters tensor
+        """
+        params = []
+        for pp in list(self.parameters()):
+            params.append(pp.view(-1))
+        return torch.cat(params)
+
     def forward(self, encoding):
         x = self.activation(self.nn1(encoding))
         x = self.activation(self.nn2(x))
         score = self.nn_out(x)
         return score
+
+    def init(self):
+        device = self.get_params().data.device
+        self.init_params = self.get_params().data.clone().to(device)
+
+    def regularization(self):
+        return ((self.get_params() - self.init_params) ** 2).sum()
