@@ -1,12 +1,11 @@
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn as nn
 from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DebertaV2Model, DebertaV2PreTrainedModel, SequenceClassifierOutput)
 
 
-class DebertaV2PairRM(DebertaV2PreTrainedModel):
+class RewardBackbone(DebertaV2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -20,17 +19,6 @@ class DebertaV2PairRM(DebertaV2PreTrainedModel):
         self.sep_token_id = config.sep_token_id  # to add
         self.source_prefix_id = config.source_prefix_id  # to add
         self.cand_prefix_id = config.cand_prefix_id
-        self.cand1_prefix_id = config.cand1_prefix_id
-        self.cand2_prefix_id = config.cand2_prefix_id
-
-        self.head_layer = nn.Sequential(
-            nn.Dropout(self.drop_out),
-            nn.Linear(2 * self.hidden_size, 1 * self.hidden_size),
-            nn.Tanh(),
-            nn.Dropout(self.drop_out),
-            nn.Linear(1 * self.hidden_size, self.n_tasks),
-        )
-        self.sigmoid = nn.Sigmoid()
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -42,9 +30,7 @@ class DebertaV2PairRM(DebertaV2PreTrainedModel):
         token_type_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, SequenceClassifierOutput]:
         r"""
@@ -55,16 +41,13 @@ class DebertaV2PairRM(DebertaV2PreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
-        #  <source_prefix_id>...<sep><cand1_prefix_id>...<sep><cand2_prefix_id> ... <sep>
+        #  <source_prefix_id>...<sep><cand_prefix_id>...<sep>
         assert all(
             [self.source_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
         ), "<source> id not in input_ids"
         assert all(
-            [self.cand1_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
-        ), "<candidate1> id not in input_ids"
-        assert all(
-            [self.cand2_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
-        ), "<candidate2> id not in input_ids"
+            [self.cand_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
+        ), "<candidate> id not in input_ids"
 
         keep_column_mask = attention_mask.ne(0).any(dim=0)
         input_ids = input_ids[:, keep_column_mask]
@@ -82,28 +65,12 @@ class DebertaV2PairRM(DebertaV2PreTrainedModel):
         encs = outputs.hidden_states[-1]
         source_idxs = torch.where(input_ids == self.source_prefix_id)
         source_encs = encs[source_idxs[0], source_idxs[1], :]
-        cand1_idxs = torch.where(input_ids == self.cand1_prefix_id)
-        cand1_encs = encs[cand1_idxs[0], cand1_idxs[1], :]
-        cand2_idxs = torch.where(input_ids == self.cand2_prefix_id)
-        cand2_encs = encs[cand2_idxs[0], cand2_idxs[1], :]
+        cand_idxs = torch.where(input_ids == self.cand_prefix_id)
+        cand_encs = encs[cand_idxs[0], cand_idxs[1], :]
 
         # reduce
-        source_cand1_encs = torch.cat([source_encs, cand1_encs], dim=-1)
-        source_cand2_encs = torch.cat([source_encs, cand2_encs], dim=-1)
-        left_pred_scores = self.head_layer(source_cand1_encs)
-        right_pred_scores = self.head_layer(source_cand2_encs)
-
-        loss = None
-        if labels is not None:
-            loss = self.compute_loss(left_pred_scores, right_pred_scores, labels)
-
-        preds = (left_pred_scores - right_pred_scores).mean(dim=-1)
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=preds,
-            hidden_states=outputs.hidden_states if output_hidden_states else None,
-            attentions=outputs.attentions,
-        )
+        source_cand_encs = torch.cat([source_encs, cand_encs], dim=-1)
+        return source_cand_encs
 
     def compute_loss(self, left_pred_scores, right_pred_scores, labels):
         """
