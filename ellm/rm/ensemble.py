@@ -1,7 +1,5 @@
 """Ensemble deep model to capture epistemic uncertainty."""
 
-import pdb
-
 import numpy as np
 import torch
 import torch.nn.functional as F

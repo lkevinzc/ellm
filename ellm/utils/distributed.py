@@ -108,8 +108,8 @@ class WorkerWrap(Worker):
         """Init torch process group for model weights update"""
         assert (
             torch.distributed.is_initialized()
-        ), f"default torch process group must be initialized"
-        assert group_name != "", f"group name must not be empty"
+        ), "default torch process group must be initialized"
+        assert group_name != "", "group name must not be empty"
 
         rank = torch.distributed.get_rank() + rank_offset
         self._model_update_group = init_process_group(
