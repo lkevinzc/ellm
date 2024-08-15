@@ -15,7 +15,9 @@
 ## Installation
 
 ```console
-pip install ellm
+pip install torch
+pip install -r requirements.txt
+pip install -e .
 ```
 
 ## License
