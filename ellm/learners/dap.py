@@ -1,6 +1,4 @@
 import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from ellm.learners.base import LearnerBase
 from ellm.learners.loss import SimPOLoss

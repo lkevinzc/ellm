@@ -22,6 +22,8 @@ format:
 	# format using black
 	$(call check_install, black)
 	black ${LINT_PATHS}
+	$(call check_install, autoflake)
+	autoflake --remove-all-unused-imports -i -r ${LINT_PATHS}
 	# sort imports
 	$(call check_install, isort)
 	isort ${LINT_PATHS}

@@ -5,6 +5,9 @@ from warnings import warn
 import llm_blender
 import vllm
 
+from ellm.exploration import Explorer
+from ellm.rm.ensemble import EnsembleModel
+from ellm.rm.model import EnnDTS
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap
 
@@ -39,7 +42,17 @@ class Actor:
         self.blender = llm_blender.Blender()
         self.blender.loadranker("llm-blender/PairRM")
 
-        self.exploration = exploration
+        # ###################################
+        # ####        Exploration        ####
+        # ###################################
+
+        if exploration is None:
+            assert sampling_params.n == 2
+        elif exploration == "enn_dts":
+            model = EnsembleModel()
+            self.explorer = Explorer(EnnDTS(model))
+        else:
+            raise NotImplementedError
 
     def generate_and_maybe_eval(
         self,
@@ -88,8 +101,7 @@ class Actor:
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
-            pass
-            print("do response selection here (efficient exploration)")
+            candidates = self.explorer.select(prompts, candidates)
 
         # step 3. query for oracle preference
         feedback = self.blender.compare(

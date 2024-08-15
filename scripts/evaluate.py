@@ -1,6 +1,5 @@
 import concurrent.futures
 import logging
-import pdb
 import random
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
@@ -12,7 +11,6 @@ from openai import OpenAI
 from transformers import HfArgumentParser
 from trl import BasePairwiseJudge, HfPairwiseJudge, is_openai_available
 from trl.trainer.judges import DEFAULT_PAIRWISE_SYSTEM_PROMPT
-from vllm import LLM, SamplingParams
 
 
 class OpenAIPairwiseJudge(BasePairwiseJudge):
