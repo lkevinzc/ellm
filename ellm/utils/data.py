@@ -51,7 +51,7 @@ def blending_datasets(
     eval_data_list = []
     for i, dataset in enumerate(datasets):
         dataset = dataset.strip()
-        dataset_subfold_list = dataset.split("@")
+        dataset_version_list = dataset.split("@")
         strategy.print(f"dataset: {dataset}")
         # local dir with python script or common local file
         if os.path.isdir(os.path.join(os.getcwd(), dataset)) or dataset.endswith(
@@ -86,12 +86,12 @@ def blending_datasets(
             else:
                 strategy.print(f"load {files} from {dataset}")
             data = load_dataset(data_type, data_files=files)
-        elif len(dataset_subfold_list) == 2:
-            dataset = dataset_subfold_list[0]
-            subfold = dataset_subfold_list[1]
-            data = load_dataset(dataset, data_dir=subfold.strip())
-        elif len(dataset_subfold_list) == 1:
-            dataset = dataset_subfold_list[0]
+        elif len(dataset_version_list) == 2:
+            dataset = dataset_version_list[0]
+            version = dataset_version_list[1]
+            data = load_dataset(dataset, revision=version.strip())
+        elif len(dataset_version_list) == 1:
+            dataset = dataset_version_list[0]
             data = load_dataset(dataset)
         else:
             raise Exception(f"Dataset Name {dataset}: Format error")
