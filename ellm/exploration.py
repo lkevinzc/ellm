@@ -1,6 +1,5 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-import einops
 import torch
 import tree
 from transformers import AutoTokenizer
@@ -20,21 +19,20 @@ class Explorer:
         self.max_length = 2048
         self.source_max_length = 1224
         self.backbone_bs = 8
-        self.head_bs = 32
 
         self.reward_model = reward_model
 
     def select(
         self, prompts: List[str], candidates: Dict[int, List[str]]
-    ) -> Tuple[List[str], List[str], List[str]]:
-        """_summary_
+    ) -> Dict[int, List[str]]:
+        """Select dueling responses from candidates.
 
         Args:
             prompts: A list of prompt texts, M
             candidates: Lists of responses per prompt, M -> N
 
         Returns:
-            Tuple[List[str], List[str], List[str]]: (prompts, candidates_A, candidates_B)
+            Dict[int, List[str]]: Pair of responses per prompt, M -> 2
         """
         input_ids = []
         M = len(prompts)
@@ -57,7 +55,6 @@ class Explorer:
             {"input_ids": input_ids},
             return_tensors="pt",
         )
-        encodings = {k: v.to(self.backbone.device) for k, v in encodings.items()}
 
         features = []
         for ndx in range(0, M * N, self.backbone_bs):
@@ -69,8 +66,12 @@ class Explorer:
             )
             features.append(self.backbone.get_feature(**batch_enc))
         features = torch.cat(features, dim=0)  # (M*N, d)
-        features = einops.rearrange(features, "(m n) d -> m n d")
+        features = features.reshape(M, N, -1)
 
         selected_candidate_indices = self.reward_model.get_duel_actions(
             features
-        )  # (M, 2)
+        ).cpu()  # (M, 2)
+        dueling_candidates = {}
+        for i, sel_idx in enumerate(selected_candidate_indices):
+            dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
+        return dueling_candidates

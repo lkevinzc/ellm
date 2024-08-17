@@ -25,6 +25,10 @@ def main(args):
         max_tokens=args.generate_max_length,
         n=args.num_samples,
     )
+    exploration_config = {
+        "method": args.exp_method,
+        "pretrain_path": args.exp_pretrain,
+    }
     program = lp.Program("online_dap")
     actors = []
     local_resources = {}
@@ -32,7 +36,8 @@ def main(args):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(Actor, vllm_args, sampling_params), label=label
+                lp.CourierNode(Actor, vllm_args, sampling_params, exploration_config),
+                label=label,
             )
         )
         local_resources[label] = local_multi_processing.PythonProcess(
@@ -117,6 +122,16 @@ if __name__ == "__main__":
     parser.add_argument("--buffer_clear_every", type=int, default=1)
     parser.add_argument("--sync_params_every", type=int, default=1)
     parser.add_argument("--dump_reward_buffer", action="store_true")
+
+    # Exploration
+    parser.add_argument(
+        "--exp_method",
+        type=str,
+        choices=["no", "enn_dts"],
+        default=["no"],
+        help="Types of exploration.",
+    )
+    parser.add_argument("--exp_pretrain", type=str, default="")
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)

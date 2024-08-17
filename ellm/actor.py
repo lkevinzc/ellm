@@ -1,8 +1,8 @@
 import time
 from typing import List
-from warnings import warn
 
 import llm_blender
+import torch
 import vllm
 
 from ellm.exploration import Explorer
@@ -15,7 +15,9 @@ from ellm.utils.distributed import WorkerWrap
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
-    def __init__(self, vllm_args, sampling_params, exploration=None) -> None:
+    def __init__(
+        self, vllm_args, sampling_params, exploration_config: dict = None
+    ) -> None:
         self.eval_mode = False
         self.pi_beta_weights = None
 
@@ -26,10 +28,7 @@ class Actor:
 
         assert self.__vllm_version__ >= "0.4.1", "Upgrade to vLLM >= 0.4.1"
         assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
-        if sampling_params.n > 2 and exploration is None:
-            warn(
-                f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
-            )
+
         vllm.worker.worker.Worker = WorkerWrap
 
         self.llm = vllm.LLM(**vllm_args)
@@ -46,10 +45,17 @@ class Actor:
         # ####        Exploration        ####
         # ###################################
 
-        if exploration is None:
-            assert sampling_params.n == 2
-        elif exploration == "enn_dts":
-            model = EnsembleModel()
+        if exploration_config is None or exploration_config["method"] == "no":
+            assert (
+                sampling_params.n == 2
+            ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+        elif exploration_config["method"] == "enn_dts":
+            model = EnsembleModel(2048, 10)
+            model_path = exploration_config.get("pretrain_path", "")
+            if model_path:
+                print(f"Loading pretrained ENN from {model_path}")
+                model.load_state_dict(torch.load(model_path))
+            model = model.cuda()
             self.explorer = Explorer(EnnDTS(model))
         else:
             raise NotImplementedError
@@ -69,7 +75,7 @@ class Actor:
         )  # TODO hard-code first
         outputs = self.llm.generate(prompts, sampling_params=sampling_params)
         responses = [output.outputs[0].text.strip() for output in outputs]
-        if references is not None:
+        if references:
             win = self.blender.compare(
                 prompts,
                 responses,
@@ -101,6 +107,7 @@ class Actor:
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
+            print("Selecting dueling responses from candidates...")
             candidates = self.explorer.select(prompts, candidates)
 
         # step 3. query for oracle preference

@@ -70,6 +70,7 @@ class EnsembleModel(nn.Module):
     def __init__(self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"):
         super(EnsembleModel, self).__init__()
         self.hidden_size = hidden_dim
+        self.num_ensemble = num_ensemble
         self.nn1 = EnsembleFC(
             encoding_dim, hidden_dim, num_ensemble, weight_decay=0.000025
         )

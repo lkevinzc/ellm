@@ -9,6 +9,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "pretrain", "cleanrl/EleutherAI_pythia-1b-deduped__sft__tldr", "model name"
 )
+flags.DEFINE_integer("n_sampling", 2, "number of samples for exploration")
+flags.DEFINE_enum("exp_method", "no", ["no", "enn_dts"], "exploration method")
+flags.DEFINE_string("exp_pretrain", "", "pretrained exploration model")
 
 
 def main(_):
@@ -22,9 +25,13 @@ def main(_):
         "enable_prefix_caching": True,
     }
     sampling_params = vllm.SamplingParams(
-        temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=2
+        temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=FLAGS.n_sampling
     )
-    actor = Actor(vllm_args, sampling_params)
+    exploration_config = {
+        "method": FLAGS.exp_method,
+        "pretrain_path": FLAGS.exp_pretrain,
+    }
+    actor = Actor(vllm_args, sampling_params, exploration_config)
 
     preference_data = actor.step(
         [
