@@ -4,7 +4,7 @@ import os
 import socket
 from collections import deque
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 from warnings import warn
 
 import deepspeed
@@ -129,7 +129,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # configure scheduler
         num_update_steps_per_episodes = int(
             len(prompts_dataset) // args.train_batch_size
-        )  # FIXME : the calculated number is 2, with len(prompts_dataloader)=19, which is very wrong.
+        )
         max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
         scheduler = get_scheduler(
             "cosine_with_min_lr",
@@ -177,7 +177,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             actors, tokenizer, args.prompt_max_length, strategy, self._wandb
         )
         self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
-        self.r_buffer = deque(maxlen=args.micro_r_buffer_maxlen)
 
         self.strategy = strategy
         self.tokenizer = tokenizer
@@ -186,6 +185,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.global_step = 0
         self.pi_beta_version = 0
         self.update_step = 0
+        self.query_step = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -262,16 +262,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts
                 )
-                for i, pref in enumerate(preference_data):
-                    # Replace with raw prompts instead of templated ones
-                    new_pref = PreferenceData(
-                        prompt=raw_prompts[i],
-                        chosen_response=pref.chosen_response,
-                        rejected_response=pref.rejected_response,
-                    )
-                    self.pi_buffer.append(new_pref)
-                    # TODO aggregate to master for reward model training.
-                    self.r_buffer.append(new_pref)
+                self.query_step += len(preference_data)
+                self.process_preference_data(preference_data, raw_prompts)
 
                 if steps % update_interval == 0:
                     train_info = self.preference_learning(steps // update_interval)
@@ -291,19 +283,31 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 progress_bar.update()
                 steps += 1
 
-        if self.args.dump_reward_buffer:  # For debug purpose.
-            if not self.strategy.is_rank_0():
-                dist.gather_object(self.r_buffer)
-            else:
-                gather_r_buffer = [None] * self.strategy.world_size
-                dist.gather_object(self.r_buffer, gather_r_buffer)
-                pd.to_pickle(
-                    gather_r_buffer, os.path.join(self.save_path, "buffer.pkl")
-                )
+        # if self.args.dump_reward_buffer:  # For debug purpose.
+        #     if not self.strategy.is_rank_0():
+        #         dist.gather_object(self.r_buffer)
+        #     else:
+        #         gather_r_buffer = [None] * self.strategy.world_size
+        #         dist.gather_object(self.r_buffer, gather_r_buffer)
+        #         pd.to_pickle(
+        #             gather_r_buffer, os.path.join(self.save_path, "buffer.pkl")
+        #         )
 
         if self.strategy.is_rank_0():
             self._wandb.finish()
             lp.stop()
+
+    def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
+        for i, pref in enumerate(data_list):
+            # Replace with raw prompts instead of templated ones
+            new_pref = PreferenceData(
+                prompt=raw_prompts[i],
+                chosen_response=pref.chosen_response,
+                rejected_response=pref.rejected_response,
+                chosen_feature=None,
+                rejected_feature=None,
+            )
+            self.pi_buffer.append(new_pref)
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()
@@ -374,6 +378,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def learning_step(self, data):
         """Preference learning step."""
 
+    def get_misc_info(self) -> Dict[str, Any]:
+        return {
+            "pi_beta_version": self.pi_beta_version,
+            "global_step": self.global_step,
+            "update_step": self.update_step,
+            "pi_buffer_len": len(self.pi_buffer),
+        }
+
     def save_logs_and_checkpoints(self, args, update_steps, train_info):
         # eval
         eval_info = {}
@@ -382,12 +394,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # logs
         if update_steps % args.logging_steps == 0:
-            misc_info = {
-                "pi_beta_version": self.pi_beta_version,
-                "global_step": self.global_step,
-                "update_step": self.update_step,
-                "pi_buffer_len": len(self.pi_buffer),
-            }
+            misc_info = self.get_misc_info()
             try:
                 last_lr = self.scheduler.get_last_lr()[0]
                 misc_info["lr"] = last_lr
@@ -401,6 +408,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             }
             logs_dict = {**train_info, **eval_info, **self.actor_info, **misc_info}
             logs_dict = self.strategy.all_reduce(logs_dict)
+            logs_dict.update(
+                self.strategy.all_reduce(
+                    {"query_step": self.query_step},
+                    op="sum",
+                )
+            )
 
             if self.strategy.is_rank_0():
                 if self.pi_buffer:

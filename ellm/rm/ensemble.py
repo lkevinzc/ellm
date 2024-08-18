@@ -111,8 +111,9 @@ class EnsembleModel(nn.Module):
         return score
 
     def init(self):
-        device = self.get_params().data.device
-        self.init_params = self.get_params().data.clone().to(device)
+        self.init_params = self.get_params().data.clone()
+        if torch.cuda.is_available():
+            self.init_params = self.init_params.cuda()
 
     def regularization(self):
         return ((self.get_params() - self.init_params) ** 2).sum()

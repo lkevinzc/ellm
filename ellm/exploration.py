@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Dict, List
 
 import torch
@@ -6,6 +7,12 @@ from transformers import AutoTokenizer
 
 from ellm.rm.backbone import DebertaV2PairRM
 from ellm.rm.model import RewardModel
+
+
+@dataclass
+class ExplorationResults:
+    dueling_candidates: Dict[int, List[str]]
+    candidate_features: torch.Tensor
 
 
 class Explorer:
@@ -20,19 +27,23 @@ class Explorer:
         self.source_max_length = 1224
         self.backbone_bs = 8
 
-        self.reward_model = reward_model
+        self.reward_model = reward_model.cuda()
 
     def select(
-        self, prompts: List[str], candidates: Dict[int, List[str]]
-    ) -> Dict[int, List[str]]:
+        self,
+        prompts: List[str],
+        candidates: Dict[int, List[str]],
+        return_features: bool,
+    ) -> ExplorationResults:
         """Select dueling responses from candidates.
 
         Args:
-            prompts: A list of prompt texts, M
-            candidates: Lists of responses per prompt, M -> N
+            prompts (List[str]): A list of prompt texts, M
+            candidates (Dict[int, List[str]]): Lists of responses per prompt, M -> N
+            return_features (bool): Whether return features of (prompt, response)
 
         Returns:
-            Dict[int, List[str]]: Pair of responses per prompt, M -> 2
+            ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         input_ids = []
         M = len(prompts)
@@ -66,7 +77,7 @@ class Explorer:
             )
             features.append(self.backbone.get_feature(**batch_enc))
         features = torch.cat(features, dim=0)  # (M*N, d)
-        features = features.reshape(M, N, -1)
+        features = features.view(M, N, -1)
 
         selected_candidate_indices = self.reward_model.get_duel_actions(
             features
@@ -74,4 +85,13 @@ class Explorer:
         dueling_candidates = {}
         for i, sel_idx in enumerate(selected_candidate_indices):
             dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
-        return dueling_candidates
+        return ExplorationResults(
+            dueling_candidates=dueling_candidates,
+            candidate_features=(
+                torch.stack(
+                    [features[i][selected_candidate_indices[i]] for i in range(M)]
+                )
+                if return_features
+                else None
+            ),
+        )

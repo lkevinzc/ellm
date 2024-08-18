@@ -5,19 +5,16 @@ import llm_blender
 import torch
 import vllm
 
-from ellm.exploration import Explorer
-from ellm.rm.ensemble import EnsembleModel
-from ellm.rm.model import EnnDTS
+from ellm.exploration import ExplorationResults, Explorer
+from ellm.rm.model import EnnDTS, default_weight_loader
 from ellm.types import PreferenceData
-from ellm.utils.distributed import WorkerWrap
+from ellm.utils.distributed import WorkerWrap, torch_type_codec
 
 
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
-    def __init__(
-        self, vllm_args, sampling_params, exploration_config: dict = None
-    ) -> None:
+    def __init__(self, vllm_args, sampling_params, args) -> None:
         self.eval_mode = False
         self.pi_beta_weights = None
 
@@ -44,19 +41,21 @@ class Actor:
         # ###################################
         # ####        Exploration        ####
         # ###################################
-
-        if exploration_config is None or exploration_config["method"] == "no":
+        self.learning_rm = False
+        if args.exp_method == "no":
             assert (
                 sampling_params.n == 2
             ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
-        elif exploration_config["method"] == "enn_dts":
-            model = EnsembleModel(2048, 10)
-            model_path = exploration_config.get("pretrain_path", "")
-            if model_path:
-                print(f"Loading pretrained ENN from {model_path}")
-                model.load_state_dict(torch.load(model_path))
-            model = model.cuda()
-            self.explorer = Explorer(EnnDTS(model))
+        elif args.exp_method == "enn_dts":
+            assert sampling_params.n > 2
+            self.explorer = Explorer(EnnDTS(args))
+            if args.exp_pretrain:
+                print(f"Loading pretrained ENN from {args.exp_pretrain}")
+                self.explorer.reward_model.model.load_state_dict(
+                    torch.load(args.exp_pretrain)
+                )
+            else:
+                self.learning_rm = True  # Learn RM online.
         else:
             raise NotImplementedError
 
@@ -108,7 +107,11 @@ class Actor:
         # step 2. optional selection
         if self.sampling_params.n > 2:
             print("Selecting dueling responses from candidates...")
-            candidates = self.explorer.select(prompts, candidates)
+            # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
+            results: ExplorationResults = self.explorer.select(
+                prompts, candidates, return_features=self.learning_rm
+            )
+            candidates = results.dueling_candidates
 
         # step 3. query for oracle preference
         feedback = self.blender.compare(
@@ -123,6 +126,16 @@ class Actor:
                 prompt=prompts[i],
                 chosen_response=candidates[i][chosen[i]],
                 rejected_response=candidates[i][rejected[i]],
+                chosen_feature=(
+                    results.candidate_features[i][chosen[i]]
+                    if self.learning_rm
+                    else None
+                ),
+                rejected_feature=(
+                    results.candidate_features[i][rejected[i]]
+                    if self.learning_rm
+                    else None
+                ),
             )
             for i in range(len(prompts))
         ]
@@ -132,8 +145,15 @@ class Actor:
     def init_process_group(
         self, master_address, master_port, rank_offset, world_size, group_name, backend
     ):
-        return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
-            master_address, master_port, rank_offset, world_size, group_name, backend
+        self._model_update_group = (
+            self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+                master_address,
+                master_port,
+                rank_offset,
+                world_size,
+                group_name,
+                backend,
+            )
         )
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
@@ -141,6 +161,16 @@ class Actor:
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
             name, dtype, shape, empty_cache
         )
+
+    def update_rm(self, name, dtype, shape):
+        assert self.learning_rm
+        dtype = torch_type_codec(dtype)
+        weight = torch.empty(shape, dtype=dtype, device="cuda")
+        torch.distributed.broadcast(weight, 0, group=self._model_update_group)
+        params_dict = dict(self.explorer.reward_model.named_parameters())
+        default_weight_loader(params_dict[name], weight)
+        print("update reward model weights!!!")
+        del weight
 
     def notify_eval_start(self):
         """Temporarily cache the current behavior policy weights to CPU."""

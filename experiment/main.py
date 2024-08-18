@@ -1,87 +1,17 @@
 import argparse
 
 import launchpad as lp
-import vllm
-from launchpad.nodes.python import local_multi_processing
 
-from ellm.actor import Actor
-from ellm.learners.dap import DAPLearner
-from ellm.utils.launcher import get_free_port
+from ellm.interface import get_program
+from ellm.learners import DAPLearner, DAPwRMLearner
 
 
 def main(args):
-    # actor setup
-    vllm_args = {
-        "model": args.pretrain,
-        "trust_remote_code": True,
-        "tensor_parallel_size": 1,
-        "gpu_memory_utilization": 0.5,
-        "dtype": "bfloat16",
-    }
-    sampling_params = vllm.SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.generate_max_length,
-        n=args.num_samples,
-    )
-    exploration_config = {
-        "method": args.exp_method,
-        "pretrain_path": args.exp_pretrain,
-    }
-    program = lp.Program("online_dap")
-    actors = []
-    local_resources = {}
-    for i in range(4):
-        label = f"actor_{i}"
-        actors.append(
-            program.add_node(
-                lp.CourierNode(Actor, vllm_args, sampling_params, exploration_config),
-                label=label,
-            )
-        )
-        local_resources[label] = local_multi_processing.PythonProcess(
-            env=dict(CUDA_VISIBLE_DEVICES=str(i))
-        )
-    _gpu_offset = 4
-
-    master_addr = "0.0.0.0"
-    master_port = get_free_port()
-    args.local_rank = 0
-    label = "learner_0"
-    master_learner = lp.PyClassNode(
-        DAPLearner,
-        4,
-        0,
-        0,
-        master_addr,
-        master_port,
-        True,
-        args,
-        actors,
-    )
-    program.add_node(master_learner, label=label)
-    local_resources[label] = local_multi_processing.PythonProcess(
-        env=dict(CUDA_VISIBLE_DEVICES=str(_gpu_offset))
-    )
-    for i in range(1, 4):
-        label = f"learner_{i}"
-        worker_learner = lp.PyClassNode(
-            DAPLearner,
-            4,
-            i,
-            i,
-            master_addr,
-            master_port,
-            False,
-            args,
-            actors,
-        )
-        program.add_node(worker_learner, label=label)
-        local_resources[label] = local_multi_processing.PythonProcess(
-            env=dict(CUDA_VISIBLE_DEVICES=str(i + _gpu_offset))
-        )
-
+    if args.learn_rm:
+        learner_cls = DAPwRMLearner
+    else:
+        learner_cls = DAPLearner
+    program, local_resources = get_program(args, learner_cls)
     lp.launch(
         program,
         launch_type="local_mp",
@@ -124,6 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("--dump_reward_buffer", action="store_true")
 
     # Exploration
+    parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument(
         "--exp_method",
         type=str,
@@ -132,6 +63,12 @@ if __name__ == "__main__":
         help="Types of exploration.",
     )
     parser.add_argument("--exp_pretrain", type=str, default="")
+    ## enn_dts
+    parser.add_argument("--num_ensemble", type=int, default=10)
+    parser.add_argument("--enn_lr", type=float, default=1e-3)
+    parser.add_argument("--enn_lambda", type=float, default=0.1)
+    parser.add_argument("--enn_hidden_dim", type=int, default=128)
+    parser.add_argument("--enn_sgd_steps", type=int, default=1)
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)
@@ -155,7 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
     parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=999999999)
-    parser.add_argument("--micro_r_buffer_maxlen", type=int, default=999999999)
+    parser.add_argument("--r_buffer_maxlen", type=int, default=3200)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
 
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
@@ -218,7 +155,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Validation.
     if args.ref_pretrain is None or args.ref_pretrain == "":
         args.ref_pretrain = args.pretrain
+    if args.learn_rm:
+        args.exp_method != "no"
+        args.exp_pretrain == ""
 
     main(args)
