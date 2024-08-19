@@ -90,7 +90,7 @@ class Explorer:
             candidate_features=(
                 torch.stack(
                     [features[i][selected_candidate_indices[i]] for i in range(M)]
-                )
+                ).cpu()
                 if return_features
                 else None
             ),

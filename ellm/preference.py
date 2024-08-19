@@ -40,8 +40,9 @@ class PreferenceCollector:
         st_time = time.time()
         rank = torch.distributed.get_rank()
         actor = self.actors[rank % len(self.actors)]
-        fut = actor.futures.step(prompts)
-        preference_data: List[PreferenceData] = fut.result()
+
+        preference_data: List[PreferenceData] = actor.step(prompts)
+
         actor_time = time.time() - st_time
 
         info = {
@@ -51,6 +52,9 @@ class PreferenceCollector:
             ),
             "actor/rejected_avg_str_len": np.mean(
                 [len(p.rejected_response) for p in preference_data]
+            ),
+            "actor/same_response_ratio": np.mean(
+                [p.chosen_response == p.rejected_response for p in preference_data]
             ),
         }
 

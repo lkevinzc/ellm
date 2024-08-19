@@ -18,11 +18,12 @@ class Controller:
         self._dataloader = ["San Franciso is a", "OpenAI is"]
 
     def run(self):
-        # Make it synchronized or otherwise transmitting features will be stuck.
-        results = [
-            actor.step([self._dataloader[i % 2]])
+
+        futures = [
+            actor.futures.step([self._dataloader[i % 2]])
             for i, actor in enumerate(self._actors)
         ]
+        results = [future.result() for future in futures]
         logging.info("Results: %s", results)
         lp.stop()
 
