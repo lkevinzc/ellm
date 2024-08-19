@@ -242,11 +242,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         self.actor_info = {}
 
-        self.save_logs_and_checkpoints(
-            self.args,
-            self.update_step,
-            {},
-        )
+        if not self.strategy.args.debug:
+            self.save_logs_and_checkpoints(
+                self.args,
+                self.update_step,
+                {},
+            )
 
         for episode in range(self.args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -410,7 +411,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             logs_dict = self.strategy.all_reduce(logs_dict)
             logs_dict.update(
                 self.strategy.all_reduce(
-                    {"query_step": self.query_step},
+                    {"misc/query_step": self.query_step},
                     op="sum",
                 )
             )

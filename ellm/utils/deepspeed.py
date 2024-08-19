@@ -530,6 +530,10 @@ class DeepspeedStrategy(ABC):
                 data = data.cpu()
             return data.item() if not is_tensor else data
 
+    def debug(self, *msg):
+        if self.args.debug:
+            print(*msg)
+
     def print(self, *msg):
         if self.is_rank_0():
             print("\n")

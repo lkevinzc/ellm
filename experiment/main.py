@@ -22,6 +22,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--run_name", type=str, default="default")
+
     parser.add_argument("--pretrain", type=str, default="google/gemma-2b")
     parser.add_argument("--ref_pretrain", type=str, default=None)
 
@@ -59,7 +62,7 @@ if __name__ == "__main__":
         "--exp_method",
         type=str,
         choices=["no", "enn_dts"],
-        default=["no"],
+        default="no",
         help="Types of exploration.",
     )
     parser.add_argument("--exp_pretrain", type=str, default="")
@@ -159,7 +162,6 @@ if __name__ == "__main__":
     if args.ref_pretrain is None or args.ref_pretrain == "":
         args.ref_pretrain = args.pretrain
     if args.learn_rm:
-        args.exp_method != "no"
-        args.exp_pretrain == ""
+        assert args.exp_method != "no" and args.exp_pretrain == ""
 
     main(args)

@@ -9,14 +9,18 @@ from ellm.exploration import ExplorationResults, Explorer
 from ellm.rm.model import EnnDTS, default_weight_loader
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
+from ellm.utils.ipc import PlasmaShmClient
 
 
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
     def __init__(self, vllm_args, sampling_params, args) -> None:
+        self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
+
+        self.ipc = PlasmaShmClient()
 
         # ###################################
         # ####      vLLM Generation      ####
@@ -27,7 +31,7 @@ class Actor:
         assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
 
         vllm.worker.worker.Worker = WorkerWrap
-
+        vllm_args.update({"seed": int(time.time() * 1000) % 2**32})
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
         self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
@@ -140,7 +144,8 @@ class Actor:
             for i in range(len(prompts))
         ]
 
-        return preference_data
+        handle = self.ipc.serialize_ipc(preference_data)
+        return handle
 
     def init_process_group(
         self, master_address, master_port, rank_offset, world_size, group_name, backend
@@ -169,7 +174,7 @@ class Actor:
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
         params_dict = dict(self.explorer.reward_model.named_parameters())
         default_weight_loader(params_dict[name], weight)
-        print("update reward model weights!!!")
+        print(f"update reward model weight {name}")
         del weight
 
     def notify_eval_start(self):

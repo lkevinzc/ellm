@@ -56,6 +56,7 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": 0,
             "train/rm/loss_reg": 0,
+            "train/rm/lambda": 0,
         }
 
     def __init__(self, args: Namespace) -> None:
@@ -123,6 +124,7 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": loss_rew.detach(),
             "train/rm/loss_reg": loss_reg.detach(),
+            "train/rm/lambda": self.reg_lambda * self.train_bs / total_num_queries,
         }
 
 

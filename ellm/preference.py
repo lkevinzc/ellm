@@ -7,6 +7,7 @@ import torch
 from ellm.actor import Actor
 from ellm.types import PreferenceData
 from ellm.utils.deepspeed import DeepspeedStrategy
+from ellm.utils.ipc import PlasmaShmClient
 
 
 class PreferenceCollector:
@@ -23,6 +24,7 @@ class PreferenceCollector:
         self.strategy = strategy
         self.prompt_max_len = prompt_max_len
         self.logger = logger
+        self.ipc = PlasmaShmClient()
 
     def tokenize_fn(self, texts, max_length, device):
         batch = self.tokenizer(
@@ -34,14 +36,14 @@ class PreferenceCollector:
         )
         return {k: v.to(device) for k, v in batch.items()}
 
-    @torch.no_grad()
     def __call__(self, prompts: Union[str, List[str]]) -> List[PreferenceData]:
         # generate response & get feedback
         st_time = time.time()
         rank = torch.distributed.get_rank()
         actor = self.actors[rank % len(self.actors)]
 
-        preference_data: List[PreferenceData] = actor.step(prompts)
+        handle = actor.step(prompts)
+        preference_data: List[PreferenceData] = self.ipc.deserialize_ipc(handle)
 
         actor_time = time.time() - st_time
 

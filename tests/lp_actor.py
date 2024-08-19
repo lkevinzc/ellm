@@ -5,6 +5,7 @@ from launchpad.nodes.python import local_multi_processing
 from ml_collections import ConfigDict
 
 from ellm.actor import Actor
+from ellm.utils.ipc import PlasmaShmClient, PlasmaShmServer
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("num_actors", 2, "The number of concurrent actors.")
@@ -16,6 +17,7 @@ class Controller:
     def __init__(self, actors):
         self._actors = actors
         self._dataloader = ["San Franciso is a", "OpenAI is"]
+        self._ipc_client = PlasmaShmClient()
 
     def run(self):
 
@@ -23,7 +25,10 @@ class Controller:
             actor.futures.step([self._dataloader[i % 2]])
             for i, actor in enumerate(self._actors)
         ]
-        results = [future.result() for future in futures]
+
+        results = [
+            self._ipc_client.deserialize_ipc(future.result()) for future in futures
+        ]
         logging.info("Results: %s", results)
         lp.stop()
 
@@ -42,7 +47,7 @@ def make_program(num_actors, vllm_args, sampling_params, args):
         local_resources[label] = local_multi_processing.PythonProcess(
             env=dict(CUDA_VISIBLE_DEVICES=str(i))
         )
-
+    program.add_node(lp.CourierNode(PlasmaShmServer), label="ipc")
     node = lp.CourierNode(Controller, actors=actors)
     program.add_node(node, label="controller")
     return program, local_resources
@@ -55,7 +60,6 @@ def main(_):
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": 0.5,
         "dtype": "bfloat16",
-        "seed": 0,
         "enable_prefix_caching": True,
     }
     sampling_params = vllm.SamplingParams(

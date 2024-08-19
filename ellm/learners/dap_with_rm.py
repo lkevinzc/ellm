@@ -20,7 +20,7 @@ class DAPwRMLearner(DAPLearner):
         assert args.exp_method != "no" and args.exp_pretrain == ""
         if args.exp_method == "enn_dts":
             if self.strategy.is_rank_0():
-                self.rm = EnnDTS(args)
+                self.rm = EnnDTS(args).to(torch.cuda.current_device())
                 self.r_buffer = UniformBuffer(
                     args.r_buffer_maxlen, device=torch.cuda.current_device()
                 )
@@ -46,6 +46,7 @@ class DAPwRMLearner(DAPLearner):
     def preference_learning(self, learning_round):
         train_info = super().preference_learning(learning_round)
         train_info.update(self._reward_learning())
+        return train_info
 
     def get_misc_info(self) -> Dict[str, Any]:
         info = super().get_misc_info()
@@ -79,8 +80,8 @@ class DAPwRMLearner(DAPLearner):
 
     def _reward_learning(self):
         # Aggregate data from workers.
+        total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
         if self.rm:
-            total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
             self.train_rm_info = self.rm.learn(self.r_buffer, total_num_queries)
         self.strategy.broadcast(self.train_rm_info)
         return self.train_rm_info
