@@ -2,11 +2,14 @@ import launchpad as lp
 import vllm
 from absl import app, flags, logging
 from launchpad.nodes.python import local_multi_processing
+from ml_collections import ConfigDict
 
 from ellm.actor import Actor
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("num_actors", 2, "The number of concurrent actors.")
+flags.DEFINE_enum("exp_method", "no", ["no", "enn_dts"], "exploration method")
+flags.DEFINE_string("exp_pretrain", "", "pretrained exploration model")
 
 
 class Controller:
@@ -15,17 +18,16 @@ class Controller:
         self._dataloader = ["San Franciso is a", "OpenAI is"]
 
     def run(self):
-
-        futures = [
-            actor.futures.step([self._dataloader[i % 2]])
+        # Make it synchronized or otherwise transmitting features will be stuck.
+        results = [
+            actor.step([self._dataloader[i % 2]])
             for i, actor in enumerate(self._actors)
         ]
-        results = [future.result() for future in futures]
         logging.info("Results: %s", results)
         lp.stop()
 
 
-def make_program(num_actors, vllm_args, sampling_params):
+def make_program(num_actors, vllm_args, sampling_params, args):
     program = lp.Program("query_actors")
     actors = []
     local_resources = {}
@@ -33,7 +35,7 @@ def make_program(num_actors, vllm_args, sampling_params):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(Actor, vllm_args, sampling_params), label=label
+                lp.CourierNode(Actor, vllm_args, sampling_params, args), label=label
             )
         )
         local_resources[label] = local_multi_processing.PythonProcess(
@@ -51,15 +53,31 @@ def main(_):
         "trust_remote_code": True,
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": 0.5,
-        "dtype": "bfloat16",  # TODO(liuzc) check whether to use bfloat
+        "dtype": "bfloat16",
         "seed": 0,
         "enable_prefix_caching": True,
     }
     sampling_params = vllm.SamplingParams(
-        temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=2
+        temperature=0.7,
+        top_p=0.9,
+        max_tokens=512,
+        seed=0,
+        n=2 if FLAGS.exp_method == "no" else 5,
     )
     program, local_resources = make_program(
-        FLAGS.num_actors, vllm_args, sampling_params
+        FLAGS.num_actors,
+        vllm_args,
+        sampling_params,
+        ConfigDict(
+            {
+                **FLAGS.flag_values_dict(),
+                "num_ensemble": 10,
+                "enn_lr": 1e-3,
+                "enn_lambda": 0.1,
+                "enn_hidden_dim": 128,
+                "enn_sgd_steps": 1,
+            }
+        ),
     )
 
     lp.launch(
