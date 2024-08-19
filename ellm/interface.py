@@ -13,6 +13,12 @@ from ellm.utils.launcher import get_free_port
 
 def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     """Define the default distributed program topology with configs."""
+    program = lp.Program("online_dap")
+
+    # IPC.
+    ipc_server = program.add_node(
+        lp.CourierNode(PlasmaShmServer, size_mb=1000), label="ipc_server"
+    )
 
     # Actor.
     vllm_args = {
@@ -29,14 +35,14 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         max_tokens=args.generate_max_length,
         n=args.num_samples,
     )
-    program = lp.Program("online_dap")
+
     actors = []
     local_resources = {}
     for i in range(4):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(Actor, vllm_args, sampling_params, args),
+                lp.CourierNode(Actor, ipc_server, vllm_args, sampling_params, args),
                 label=label,
             )
         )
@@ -51,15 +57,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     args.local_rank = 0
     label = "learner_0"
     master_learner = lp.PyClassNode(
-        learner_cls,
-        4,
-        0,
-        0,
-        master_addr,
-        master_port,
-        True,
-        args,
-        actors,
+        learner_cls, 4, 0, 0, master_addr, master_port, True, args, actors, ipc_server
     )
     program.add_node(master_learner, label=label)
     local_resources[label] = local_multi_processing.PythonProcess(
@@ -77,10 +75,11 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
             False,
             args,
             actors,
+            ipc_server,
         )
         program.add_node(worker_learner, label=label)
         local_resources[label] = local_multi_processing.PythonProcess(
             env=dict(CUDA_VISIBLE_DEVICES=str(i + _gpu_offset))
         )
-    program.add_node(lp.CourierNode(PlasmaShmServer, size_mb=1000), label="ipc")
+
     return program, local_resources

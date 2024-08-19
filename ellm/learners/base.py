@@ -44,12 +44,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         is_master,
         args,
         actors,
+        ipc_server,
     ) -> None:
         super().__init__(
             world_size, rank, local_rank, master_addr, master_port, is_master
         )
         self.args = args
         self.actors = actors
+        self.ipc_server = ipc_server
 
     def _init(self, args, actors: List[Actor]) -> None:
         strategy = get_strategy(args)
@@ -174,7 +176,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
 
         self.preference_collector = PreferenceCollector(
-            actors, tokenizer, args.prompt_max_length, strategy, self._wandb
+            actors,
+            tokenizer,
+            self.ipc_server,
+            args.prompt_max_length,
+            strategy,
+            self._wandb,
         )
         self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
 

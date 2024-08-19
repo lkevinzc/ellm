@@ -15,12 +15,12 @@ from ellm.utils.ipc import PlasmaShmClient
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
-    def __init__(self, vllm_args, sampling_params, args) -> None:
+    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
 
-        self.ipc = PlasmaShmClient()
+        self.ipc_client = PlasmaShmClient(ipc_server)
 
         # ###################################
         # ####      vLLM Generation      ####
@@ -144,7 +144,7 @@ class Actor:
             for i in range(len(prompts))
         ]
 
-        handle = self.ipc.serialize_ipc(preference_data)
+        handle = self.ipc_client.serialize_ipc(preference_data)
         return handle
 
     def init_process_group(
