@@ -7,12 +7,12 @@ from launchpad.nodes.python import local_multi_processing
 
 from ellm.actor import Actor
 from ellm.learners.base import LearnerBase
-from ellm.learners.dap import DAPLearner
+from ellm.utils.ipc import PlasmaShmServer
 from ellm.utils.launcher import get_free_port
 
 
 def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
-    # Define the default distributed program topology with configs.
+    """Define the default distributed program topology with configs."""
 
     # Actor.
     vllm_args = {
@@ -68,7 +68,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     for i in range(1, 4):
         label = f"learner_{i}"
         worker_learner = lp.PyClassNode(
-            DAPLearner,
+            learner_cls,
             4,
             i,
             i,
@@ -82,4 +82,5 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         local_resources[label] = local_multi_processing.PythonProcess(
             env=dict(CUDA_VISIBLE_DEVICES=str(i + _gpu_offset))
         )
+    program.add_node(lp.CourierNode(PlasmaShmServer, size_mb=1000), label="ipc")
     return program, local_resources
