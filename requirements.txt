@@ -1,7 +1,7 @@
 accelerate
 bitsandbytes
 datasets
-deepspeed==0.13.5
+deepspeed==0.14.4
 einops
 flash-attn==2.5.8
 jsonlines
@@ -13,8 +13,10 @@ dm-launchpad[tensorflow]
 torchmetrics
 tqdm
 llm-blender==0.0.2
-transformers==4.41.0
+transformers==4.43.3
 vllm==0.4.2
 transformers_stream_generator
 wandb
 wheel
+ml_collections
+pyarrow>=0.6.1,<12
