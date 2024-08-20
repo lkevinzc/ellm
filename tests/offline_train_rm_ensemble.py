@@ -1,5 +1,3 @@
-import pdb
-
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -135,6 +133,7 @@ def main(
             model.train()
 
     wandb.finish()
+    torch.save(model.cpu().state_dict(), f"./offline_reward_enn_{num_ensemble}.pt")
 
 
 if __name__ == "__main__":

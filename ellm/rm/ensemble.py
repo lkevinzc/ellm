@@ -1,7 +1,5 @@
 """Ensemble deep model to capture epistemic uncertainty."""
 
-import pdb
-
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -72,6 +70,7 @@ class EnsembleModel(nn.Module):
     def __init__(self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"):
         super(EnsembleModel, self).__init__()
         self.hidden_size = hidden_dim
+        self.num_ensemble = num_ensemble
         self.nn1 = EnsembleFC(
             encoding_dim, hidden_dim, num_ensemble, weight_decay=0.000025
         )
@@ -112,8 +111,9 @@ class EnsembleModel(nn.Module):
         return score
 
     def init(self):
-        device = self.get_params().data.device
-        self.init_params = self.get_params().data.clone().to(device)
+        self.init_params = self.get_params().data.clone()
+        if torch.cuda.is_available():
+            self.init_params = self.init_params.cuda()
 
     def regularization(self):
         return ((self.get_params() - self.init_params) ** 2).sum()

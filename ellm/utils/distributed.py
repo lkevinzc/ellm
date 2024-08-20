@@ -1,11 +1,9 @@
 import errno
 import socket
-import time
 from datetime import timedelta
 from typing import Any, Optional, Union
 
 import torch
-import tree
 from torch.distributed.distributed_c10d import (Backend, PrefixStore, Store,
                                                 _new_process_group_helper,
                                                 _world, default_pg_timeout,
@@ -108,8 +106,8 @@ class WorkerWrap(Worker):
         """Init torch process group for model weights update"""
         assert (
             torch.distributed.is_initialized()
-        ), f"default torch process group must be initialized"
-        assert group_name != "", f"group name must not be empty"
+        ), "default torch process group must be initialized"
+        assert group_name != "", "group name must not be empty"
 
         rank = torch.distributed.get_rank() + rank_offset
         self._model_update_group = init_process_group(
@@ -123,6 +121,7 @@ class WorkerWrap(Worker):
             f"init_process_group: master_address={master_address}, master_port={master_port}, ",
             f"rank={rank}, world_size={world_size}, group_name={group_name}",
         )
+        return self._model_update_group
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
         """Broadcast weight to all vllm workers from source rank 0 (learner model)"""
@@ -143,24 +142,6 @@ class WorkerWrap(Worker):
         # TODO: should we empty cache if all weights have updated?
         # if empty_cache:
         #     torch.cuda.empty_cache()
-
-    def offload_cpu(self):
-        print("Start offloading...")
-        st = time.time()
-        param_dict = dict(self.model_runner.model.named_parameters())
-        weights_on_cpu = {}
-        for name, weights in param_dict.items():
-            weights_on_cpu[name] = weights.data.cpu()
-        print(f"Finished offloading in {time.time() - st} seconds")
-        return weights_on_cpu
-
-    def load_cpu(self, weights_on_cpu):
-        print("Start loading from cpu...")
-        st = time.time()
-        self.model_runner.model.load_weights(
-            weights=tree.map_structure(lambda x: x.cuda(), weights_on_cpu).items()
-        )
-        print(f"Finished loading in {time.time() - st} seconds")
 
 
 def node_ip_address_from_perspective(address: str = "8.8.8.8:53"):

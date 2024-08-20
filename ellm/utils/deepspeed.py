@@ -491,6 +491,26 @@ class DeepspeedStrategy(ABC):
             dist.all_gather(ret, data.to(torch.cuda.current_device()))
             return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
 
+    def gather(self, data):
+        if isinstance(data, dict):
+            ret = {}
+            for k, v in data.items():
+                ret[k] = self.gather(v)
+            return ret
+        else:
+            if not isinstance(data, torch.Tensor):
+                data = torch.Tensor([data])
+            is_cpu_tensor = data.device.type == "cpu"
+
+            ret = [
+                torch.zeros_like(data).to(torch.cuda.current_device())
+                for _ in range(self.world_size)
+            ]
+            dist.gather(
+                data.to(torch.cuda.current_device()), ret if self.is_rank_0() else None
+            )
+            return torch.cat(ret).cpu() if is_cpu_tensor else torch.cat(ret)
+
     def broadcast(self, data):
         if isinstance(data, dict):
             ret = {}
@@ -509,6 +529,10 @@ class DeepspeedStrategy(ABC):
             if is_cpu_tensor:
                 data = data.cpu()
             return data.item() if not is_tensor else data
+
+    def debug(self, *msg):
+        if self.args.debug:
+            print(*msg)
 
     def print(self, *msg):
         if self.is_rank_0():

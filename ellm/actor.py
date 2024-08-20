@@ -1,20 +1,26 @@
 import time
 from typing import List
-from warnings import warn
 
 import llm_blender
+import torch
 import vllm
 
+from ellm.exploration import ExplorationResults, Explorer
+from ellm.rm.model import EnnDTS, default_weight_loader
 from ellm.types import PreferenceData
-from ellm.utils.distributed import WorkerWrap
+from ellm.utils.distributed import WorkerWrap, torch_type_codec
+from ellm.utils.ipc import PlasmaShmClient
 
 
 class Actor:
     """Actor handles the interaction between the exploration policy and the environment."""
 
-    def __init__(self, vllm_args, sampling_params, exploration=None) -> None:
+    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
+        self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
+
+        self.ipc_client = PlasmaShmClient(ipc_server)
 
         # ###################################
         # ####      vLLM Generation      ####
@@ -23,12 +29,9 @@ class Actor:
 
         assert self.__vllm_version__ >= "0.4.1", "Upgrade to vLLM >= 0.4.1"
         assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
-        if sampling_params.n > 2 and exploration is None:
-            warn(
-                f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
-            )
-        vllm.worker.worker.Worker = WorkerWrap
 
+        vllm.worker.worker.Worker = WorkerWrap
+        vllm_args.update({"seed": int(time.time() * 1000) % 2**32})
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
         self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
@@ -39,7 +42,26 @@ class Actor:
         self.blender = llm_blender.Blender()
         self.blender.loadranker("llm-blender/PairRM")
 
-        self.exploration = exploration
+        # ###################################
+        # ####        Exploration        ####
+        # ###################################
+        self.learning_rm = False
+        if args.exp_method == "no":
+            assert (
+                sampling_params.n == 2
+            ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+        elif args.exp_method == "enn_dts":
+            assert sampling_params.n > 2
+            self.explorer = Explorer(EnnDTS(args))
+            if args.exp_pretrain:
+                print(f"Loading pretrained ENN from {args.exp_pretrain}")
+                self.explorer.reward_model.model.load_state_dict(
+                    torch.load(args.exp_pretrain)
+                )
+            else:
+                self.learning_rm = True  # Learn RM online.
+        else:
+            raise NotImplementedError
 
     def generate_and_maybe_eval(
         self,
@@ -56,7 +78,7 @@ class Actor:
         )  # TODO hard-code first
         outputs = self.llm.generate(prompts, sampling_params=sampling_params)
         responses = [output.outputs[0].text.strip() for output in outputs]
-        if references is not None:
+        if references:
             win = self.blender.compare(
                 prompts,
                 responses,
@@ -88,8 +110,12 @@ class Actor:
 
         # step 2. optional selection
         if self.sampling_params.n > 2:
-            pass
-            print("do response selection here (efficient exploration)")
+            print("Selecting dueling responses from candidates...")
+            # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
+            results: ExplorationResults = self.explorer.select(
+                prompts, candidates, return_features=self.learning_rm
+            )
+            candidates = results.dueling_candidates
 
         # step 3. query for oracle preference
         feedback = self.blender.compare(
@@ -104,17 +130,35 @@ class Actor:
                 prompt=prompts[i],
                 chosen_response=candidates[i][chosen[i]],
                 rejected_response=candidates[i][rejected[i]],
+                chosen_feature=(
+                    results.candidate_features[i][chosen[i]]
+                    if self.learning_rm
+                    else None
+                ),
+                rejected_feature=(
+                    results.candidate_features[i][rejected[i]]
+                    if self.learning_rm
+                    else None
+                ),
             )
             for i in range(len(prompts))
         ]
 
-        return preference_data
+        handle = self.ipc_client.serialize_ipc(preference_data)
+        return handle
 
     def init_process_group(
         self, master_address, master_port, rank_offset, world_size, group_name, backend
     ):
-        return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
-            master_address, master_port, rank_offset, world_size, group_name, backend
+        self._model_update_group = (
+            self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+                master_address,
+                master_port,
+                rank_offset,
+                world_size,
+                group_name,
+                backend,
+            )
         )
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
@@ -122,6 +166,16 @@ class Actor:
         return self.llm.llm_engine.model_executor.driver_worker.update_weight(
             name, dtype, shape, empty_cache
         )
+
+    def update_rm(self, name, dtype, shape):
+        assert self.learning_rm
+        dtype = torch_type_codec(dtype)
+        weight = torch.empty(shape, dtype=dtype, device="cuda")
+        torch.distributed.broadcast(weight, 0, group=self._model_update_group)
+        params_dict = dict(self.explorer.reward_model.named_parameters())
+        default_weight_loader(params_dict[name], weight)
+        print(f"update reward model weight {name}")
+        del weight
 
     def notify_eval_start(self):
         """Temporarily cache the current behavior policy weights to CPU."""

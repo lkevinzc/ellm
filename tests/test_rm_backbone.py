@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from ellm.rm.backbone import RewardBackbone
+from ellm.rm.backbone import DebertaV2PairRM
 from ellm.types import PreferenceData
 
 buffer = pd.read_pickle(
@@ -19,7 +19,7 @@ data = []
 for b in buffer:
     data += list(b)
 
-backbone = RewardBackbone.from_pretrained(
+backbone = DebertaV2PairRM.from_pretrained(
     "llm-blender/PairRM-hf", device_map="cuda:0"
 ).eval()
 tokenizer = AutoTokenizer.from_pretrained("llm-blender/PairRM-hf")
@@ -72,7 +72,7 @@ dl = DataLoader(data, batch_size=4, drop_last=False, collate_fn=collate_fn)
 outputs = []
 for enc in tqdm(dl):
     enc = {k: v.to(backbone.device) for k, v in enc.items()}
-    outputs.append(backbone(**enc).detach().cpu())
+    outputs.append(backbone.get_feature(**enc).detach().cpu())
 
 
 pd.to_pickle(outputs, "processed_features_for_rm.pt")
