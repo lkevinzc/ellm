@@ -63,6 +63,31 @@ class Actor:
         else:
             raise NotImplementedError
 
+        # ###################################
+        # ####  Best-of-N for Evaluation ####
+        # ###################################
+        if args.best_of_n_eval:
+            self.num_eval_gen = args.num_bon
+        else:
+            self.num_eval_gen = 1
+        self.eval_sampling_params = vllm.SamplingParams(
+            n=self.num_eval_gen,
+            temperature=0.0 if self.num_eval_gen == 1 else args.bon_temperature,
+            top_p=0.95,
+            max_tokens=200,
+        )  # TODO hard-code first for tl;dr
+
+    def _generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
+        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
+        candidates = {}
+        for i in range(len(outputs)):
+            # for each prompt
+            candidates[i] = []
+            for k in range(sampling_params.n):
+                # for each response
+                candidates[i].append(outputs[i].outputs[k].text.strip())
+        return candidates
+
     def generate_and_maybe_eval(
         self,
         prompts: List[str],
@@ -73,11 +98,14 @@ class Actor:
         2) Optionally evaluate the win rate over references based on the oracle reward model.
         """
         assert self.eval_mode
-        sampling_params = vllm.SamplingParams(
-            temperature=0.0, top_p=0.95, max_tokens=200
-        )  # TODO hard-code first
-        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
-        responses = [output.outputs[0].text.strip() for output in outputs]
+        candidates = self._generate(prompts, self.eval_sampling_params)
+
+        if self.num_eval_gen > 1:
+            # best of n sampling
+            responses = self.explorer.best_of_n(prompts, candidates)
+        else:
+            responses = [candidates[i][0] for i in range(len(prompts))]
+
         if references:
             win = self.blender.compare(
                 prompts,
@@ -99,14 +127,7 @@ class Actor:
         """
         assert not self.eval_mode
         # step 1. generate
-        outputs = self.llm.generate(prompts, sampling_params=self.sampling_params)
-        candidates = {}
-        for i in range(len(outputs)):
-            # for each prompt
-            candidates[i] = []
-            for k in range(self.sampling_params.n):
-                # for each response
-                candidates[i].append(outputs[i].outputs[k].text.strip())
+        candidates = self._generate(prompts, self.sampling_params)
 
         # step 2. optional selection
         if self.sampling_params.n > 2:

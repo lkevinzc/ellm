@@ -26,6 +26,17 @@ class RewardModel(abc.ABC, nn.Module):
         """
 
     @abc.abstractmethod
+    def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
+        """Get Best-of-N action based on rewards of given features.
+
+        Args:
+            features (torch.Tensor): (M, N, d)
+
+        Returns:
+            torch.LongTensor: (M, 1)
+        """
+
+    @abc.abstractmethod
     def learn(self, dataset: Iterable) -> Dict[str, Any]:
         """Learn the reward model based on preference data."""
 
@@ -76,7 +87,7 @@ class EnnDTS(RewardModel):
         # self.max_trial = 3
 
     @torch.no_grad
-    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+    def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
         M, N, _ = features.shape
         E = self.model.num_ensemble
         features = einops.rearrange(features, "m n d -> (m n) d")
@@ -87,6 +98,18 @@ class EnnDTS(RewardModel):
             rewards.append(self.model(batch_feat))
         rewards = torch.cat(rewards, dim=1)  # (E, M*N, 1)
         rewards = rewards.view(E, M, N, 1)
+        return rewards
+
+    @torch.no_grad
+    def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
+        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        avg_rewards = rewards.mean(0)  # (M, N, 1)
+        best_actions = avg_rewards.argmax(dim=1)  # (M, 1)
+        return best_actions
+
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+        rewards = self._get_rewards(features)
         E, _, N, _ = rewards.shape
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement

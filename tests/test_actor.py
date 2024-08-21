@@ -1,9 +1,11 @@
-import pdb
+from threading import Thread
 
 import vllm
 from absl import app, flags
+from ml_collections import ConfigDict
 
 from ellm.actor import Actor
+from ellm.utils.ipc import PlasmaShmClient, PlasmaShmServer
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -12,6 +14,8 @@ flags.DEFINE_string(
 flags.DEFINE_integer("n_sampling", 2, "number of samples for exploration")
 flags.DEFINE_enum("exp_method", "no", ["no", "enn_dts"], "exploration method")
 flags.DEFINE_string("exp_pretrain", "", "pretrained exploration model")
+flags.DEFINE_bool("best_of_n_eval", False, "Best-of-N generation for evaluation")
+flags.DEFINE_integer("num_bon", 2, "number of samples for BoN")
 
 
 def main(_):
@@ -20,26 +24,53 @@ def main(_):
         "trust_remote_code": True,
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": 0.5,
-        "dtype": "bfloat16",  # TODO(liuzc) check whether to use bfloat
-        "seed": 0,
+        "dtype": "bfloat16",
         "enable_prefix_caching": True,
     }
     sampling_params = vllm.SamplingParams(
         temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=FLAGS.n_sampling
     )
-    exploration_config = {
-        "method": FLAGS.exp_method,
-        "pretrain_path": FLAGS.exp_pretrain,
-    }
-    actor = Actor(vllm_args, sampling_params, exploration_config)
+    ipc_server = PlasmaShmServer()
+    Thread(target=ipc_server._start_plasma_server, args=[10]).start()
+    ipc_cli = PlasmaShmClient(ipc_server)
 
-    preference_data = actor.step(
+    actor = Actor(
+        ipc_server,
+        vllm_args,
+        sampling_params,
+        ConfigDict(
+            {
+                **FLAGS.flag_values_dict(),
+                "num_ensemble": 10,
+                "enn_lr": 1e-3,
+                "enn_lambda": 0.1,
+                "enn_hidden_dim": 128,
+                "enn_sgd_steps": 1,
+                "bon_temperature": 0.3,
+            }
+        ),
+    )
+
+    handle = actor.step(
         [
             "Chengdu is a city ",
             "SUBREDDIT: r/AskReddit TITLE: How do you get someone out of your head? POST: Hi, I'm 22, and I have been with my girlfriend for 5 years now. We recently moved together. We've always loved each other intensely. Problem, I recently started to have feelings for an other person (a friend). This person has had a boyfriend for now 3 years, and has absolutely no ideas. Those feelings were so strong, it was hard to hide them. After 2 months of me being distant and really sad, my girlfriend forced me to say what was bothering me. I'm not a good liar, and now she knows. We decided to give us a week alone, I went to my parents. Now, I'm completely lost. I keep on thinking about this person, and I hate that. I would like for those feelings to go away, to leave me alone. But I can't. What do I do? It's been 3 months now, and I'm just desperate. TL;DR:",
         ]
     )
-    pdb.set_trace()
+    print("step results==")
+    print(ipc_cli.deserialize_ipc(handle))
+
+    actor.eval_mode = True
+    result = actor.generate_and_maybe_eval(
+        [
+            "Hi!",
+            "SUBREDDIT: r/AskReddit TITLE: How do you get someone out of your head? POST: Hi, I'm 22, and I have been with my girlfriend for 5 years now. We recently moved together. We've always loved each other intensely. Problem, I recently started to have feelings for an other person (a friend). This person has had a boyfriend for now 3 years, and has absolutely no ideas. Those feelings were so strong, it was hard to hide them. After 2 months of me being distant and really sad, my girlfriend forced me to say what was bothering me. I'm not a good liar, and now she knows. We decided to give us a week alone, I went to my parents. Now, I'm completely lost. I keep on thinking about this person, and I hate that. I would like for those feelings to go away, to leave me alone. But I can't. What do I do? It's been 3 months now, and I'm just desperate. TL;DR:",
+        ],
+        ["Hello!", "I don't know."],
+    )
+    print("eval results==")
+    print(result)
+    ipc_server.halt()
 
 
 if __name__ == "__main__":

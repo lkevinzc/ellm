@@ -29,6 +29,29 @@ class Explorer:
 
         self.reward_model = reward_model.cuda()
 
+    def best_of_n(
+        self,
+        prompts: List[str],
+        candidates: Dict[int, List[str]],
+    ) -> List[str]:
+        """Best-of-N generation given the reward model.
+
+        Args:
+            prompts (List[str]): A list of prompt texts, M
+            candidates (Dict[int, List[str]]): Lists of responses per prompt, M -> N
+
+        Returns:
+            List[str]: A list of the best response per prompt.
+        """
+        features = self._get_features(prompts, candidates)  # (M, N, d)
+        best_response_indices = (
+            self.reward_model.get_best_action(features).cpu().squeeze()
+        )  # (M,)
+        best_responses = [
+            candidates[i][sel_idx] for i, sel_idx in enumerate(best_response_indices)
+        ]
+        return best_responses
+
     def select(
         self,
         prompts: List[str],
@@ -45,6 +68,32 @@ class Explorer:
         Returns:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
+        features = self._get_features(prompts, candidates)  # (M, N, d)
+        selected_candidate_indices = self.reward_model.get_duel_actions(
+            features
+        ).cpu()  # (M, 2)
+        dueling_candidates = {}
+        for i, sel_idx in enumerate(selected_candidate_indices):
+            dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
+        return ExplorationResults(
+            dueling_candidates=dueling_candidates,
+            candidate_features=(
+                torch.stack(
+                    [
+                        features[i][selected_candidate_indices[i]]
+                        for i in range(len(prompts))
+                    ]
+                ).cpu()
+                if return_features
+                else None
+            ),
+        )
+
+    def _get_features(
+        self,
+        prompts: List[str],
+        candidates: Dict[int, List[str]],
+    ):
         input_ids = []
         M = len(prompts)
         N = len(candidates[0])
@@ -78,20 +127,4 @@ class Explorer:
             features.append(self.backbone.get_feature(**batch_enc))
         features = torch.cat(features, dim=0)  # (M*N, d)
         features = features.view(M, N, -1)
-
-        selected_candidate_indices = self.reward_model.get_duel_actions(
-            features
-        ).cpu()  # (M, 2)
-        dueling_candidates = {}
-        for i, sel_idx in enumerate(selected_candidate_indices):
-            dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
-        return ExplorationResults(
-            dueling_candidates=dueling_candidates,
-            candidate_features=(
-                torch.stack(
-                    [features[i][selected_candidate_indices[i]] for i in range(M)]
-                ).cpu()
-                if return_features
-                else None
-            ),
-        )
+        return features

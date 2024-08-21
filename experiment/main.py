@@ -73,6 +73,11 @@ if __name__ == "__main__":
     parser.add_argument("--enn_hidden_dim", type=int, default=128)
     parser.add_argument("--enn_sgd_steps", type=int, default=1)
 
+    # Evaluation params
+    parser.add_argument("--best_of_n_eval", action="store_true")
+    parser.add_argument("--num_bon", type=int, default=1)
+    parser.add_argument("--bon_temperature", type=float, default=0.3)
+
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.7)
