@@ -107,12 +107,11 @@ class Actor:
             responses = [candidates[i][0] for i in range(len(prompts))]
 
         if references:
-            win = self.blender.compare(
-                prompts,
-                responses,
-                references,
+            win_logits = self.blender.compare(
+                prompts, responses, references, return_logits=True
             )
-            return responses, win
+            win_probs = torch.from_numpy(win_logits).sigmoid().numpy()
+            return responses, win_probs
         return responses, None
 
     def step(self, prompts: List[str]) -> List[PreferenceData]:
