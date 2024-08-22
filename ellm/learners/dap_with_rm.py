@@ -16,6 +16,7 @@ class DAPwRMLearner(DAPLearner):
     def _init(self, args, actors) -> None:
         super()._init(args, actors)
         self.rm = None
+        self.sync_rm_only = args.sync_rm_only
 
         assert args.exp_method != "no" and args.exp_pretrain == ""
         if args.exp_method == "enn_dts":
@@ -44,8 +45,9 @@ class DAPwRMLearner(DAPLearner):
             self.r_buffer.extend(all_pair_feats)
 
     def preference_learning(self, learning_round):
-        train_info = super().preference_learning(learning_round)
-        train_info.update(self._reward_learning())
+        train_info = self._reward_learning()
+        if not self.sync_rm_only:
+            train_info.update(super().preference_learning(learning_round))
         return train_info
 
     def get_misc_info(self) -> Dict[str, Any]:
@@ -75,8 +77,9 @@ class DAPwRMLearner(DAPLearner):
 
         dist.barrier()
 
-        # Sync policy.
-        super().sync_params_to_actors()
+        if not self.sync_rm_only:
+            # Sync policy.
+            super().sync_params_to_actors()
 
     def _reward_learning(self):
         # Aggregate data from workers.

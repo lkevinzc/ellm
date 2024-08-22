@@ -13,18 +13,22 @@ from pyarrow import plasma  # type: ignore
 class PlasmaShmServer:
     def __init__(self, size_mb: int = 5):
         self._size_mb = size_mb
-        self.shm_path = ""
+        self._terminated = False
+        self._shm_path = ""
 
     def get_shm_path(self):
-        return self.shm_path
+        return self._shm_path
+
+    def halt(self):
+        self._terminated = True
 
     def _start_plasma_server(self, size_mb):
         with plasma.start_plasma_store(plasma_store_memory=size_mb * 1000 * 1000) as (
             shm_path,
             shm_process,
         ):
-            self.shm_path = shm_path
-            while True:
+            self._shm_path = shm_path
+            while not self._terminated:
                 time.sleep(3)
                 code = None
                 if isinstance(shm_process, mp.Process):

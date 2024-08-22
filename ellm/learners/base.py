@@ -2,6 +2,7 @@ import abc
 import math
 import os
 import socket
+import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List
@@ -129,10 +130,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             # self.sample_eval_indices = np.random.choice(len(eval_prompts_dataset), 10)
 
         # configure scheduler
-        num_update_steps_per_episodes = int(
+        num_policy_sgd_steps_per_episodes = int(
             len(prompts_dataset) // args.train_batch_size
         )
-        max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
+        max_steps = math.ceil(args.num_episodes * num_policy_sgd_steps_per_episodes)
         scheduler = get_scheduler(
             "cosine_with_min_lr",
             optimizer,
@@ -141,7 +142,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1},
         )
         strategy.print(
-            f"num_update_steps_per_episodes={num_update_steps_per_episodes}; max_steps={max_steps}"
+            f"num_policy_sgd_steps_per_episodes={num_policy_sgd_steps_per_episodes}; max_steps={max_steps}"
         )
 
         # prepare models/optimizers...
@@ -191,7 +192,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         self.global_step = 0
         self.pi_beta_version = 0
-        self.update_step = 0
+        self.policy_sgd_step = 0
         self.query_step = 0
 
         # Log summary of the learner
@@ -252,7 +253,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints(
                 self.args,
-                self.update_step,
+                self.policy_sgd_step,
                 {},
             )
 
@@ -278,7 +279,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                     self.save_logs_and_checkpoints(
                         self.args,
-                        self.update_step,
+                        steps,
                         train_info,
                     )
 
@@ -360,7 +361,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 step_bar.update()
                 self.global_step += 1
                 if self.global_step % self.strategy.accumulated_gradient == 0:
-                    self.update_step += 1
+                    self.policy_sgd_step += 1
 
         torch.cuda.empty_cache()
         dist.barrier()
@@ -390,18 +391,18 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         return {
             "pi_beta_version": self.pi_beta_version,
             "global_step": self.global_step,
-            "update_step": self.update_step,
+            "policy_sgd_step": self.policy_sgd_step,
             "pi_buffer_len": len(self.pi_buffer),
         }
 
-    def save_logs_and_checkpoints(self, args, update_steps, train_info):
+    def save_logs_and_checkpoints(self, args, batch_steps, train_info):
         # eval
         eval_info = {}
-        if update_steps % args.eval_steps == 0:
-            eval_info = self.evaluate(self.eval_prompts_dataloader, update_steps)
+        if batch_steps % args.eval_steps == 0:
+            eval_info = self.evaluate(self.eval_prompts_dataloader, batch_steps)
 
         # logs
-        if update_steps % args.logging_steps == 0:
+        if batch_steps % args.logging_steps == 0:
             misc_info = self.get_misc_info()
             try:
                 last_lr = self.scheduler.get_last_lr()[0]
@@ -442,10 +443,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         #         args.max_ckpt_mem,
         #     )
 
-    def evaluate(self, dataloader, update_steps):
-        self.strategy.print(
-            f"Start generating evaluation responses at step {update_steps}"
-        )
+    def evaluate(self, dataloader, steps):
+        self.strategy.print(f"Start generating evaluation responses at step {steps}")
+        st_time = time.time()
         # 1) Let Actors cache the current behavior policy.
         if self.strategy.is_rank_0():
             done = [actor.futures.notify_eval_start() for actor in self.actors]
@@ -458,11 +458,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # 3) Generate and process results
 
         win_rate = 0
+        win_rate_prob = 0
         if self.strategy.is_rank_0():
             prompts = []
             responses = []
             references = []
             futs = []
+            win_probs = []
             wins = []
             for i, (processed_prompts, _, refs) in enumerate(dataloader):
                 prompts.extend(processed_prompts)
@@ -473,9 +475,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 futs.append(fut)
                 if len(futs) == len(self.actors) or i == len(dataloader) - 1:
                     for fut in futs:
-                        resp, win = fut.result()
+                        resp, win_prob = fut.result()
                         responses.extend(resp)
-                        wins.extend(win)
+                        wins.extend(win_prob > 0.5)
+                        win_probs.extend(win_prob)
                     futs.clear()
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
@@ -483,20 +486,26 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pd.DataFrame(
                 {"prompt": prompts, "reference": references, "response": responses}
             ).to_json(
-                os.path.join(eval_res_path, f"{update_steps}.json"),
+                os.path.join(eval_res_path, f"{steps}.json"),
                 orient="records",
                 lines=True,
             )
             win_rate = np.mean(wins).item()
+            win_rate_prob = np.mean(win_probs).item()
 
         win_rate = self.strategy.broadcast(win_rate)
+        win_rate_prob = self.strategy.broadcast(win_rate_prob)
 
         # 4) Recover Actors' original behavior policy.
         if self.strategy.is_rank_0():
             done = [actor.futures.notify_eval_done() for actor in self.actors]
             _ = [d.result() for d in done]
 
-        return {"eval/rm_win_rate": win_rate}
+        return {
+            "eval/rm_win_rate": win_rate,
+            "eval/rm_win_rate_prob": win_rate_prob,
+            "eval/elapse": time.time() - st_time,
+        }
 
     def sync_params_to_actors(self):
         self._broadcast_to_vllm()

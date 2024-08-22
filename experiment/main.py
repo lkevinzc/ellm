@@ -52,9 +52,10 @@ if __name__ == "__main__":
     )
 
     # Online DAP
-    parser.add_argument("--buffer_clear_every", type=int, default=1)
+    parser.add_argument("--buffer_clear_every", type=int, default=999999999)
     parser.add_argument("--sync_params_every", type=int, default=1)
     parser.add_argument("--dump_reward_buffer", action="store_true")
+    parser.add_argument("--sync_rm_only", action="store_true")
 
     # Exploration
     parser.add_argument("--learn_rm", action="store_true")
@@ -72,6 +73,11 @@ if __name__ == "__main__":
     parser.add_argument("--enn_lambda", type=float, default=0.1)
     parser.add_argument("--enn_hidden_dim", type=int, default=128)
     parser.add_argument("--enn_sgd_steps", type=int, default=1)
+
+    # Evaluation params
+    parser.add_argument("--best_of_n_eval", action="store_true")
+    parser.add_argument("--num_bon", type=int, default=1)
+    parser.add_argument("--bon_temperature", type=float, default=0.3)
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)
@@ -163,5 +169,6 @@ if __name__ == "__main__":
         args.ref_pretrain = args.pretrain
     if args.learn_rm:
         assert args.exp_method != "no" and args.exp_pretrain == ""
-
+    if args.sync_rm_only:
+        assert args.best_of_n_eval
     main(args)
