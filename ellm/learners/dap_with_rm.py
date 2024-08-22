@@ -16,7 +16,7 @@ class DAPwRMLearner(DAPLearner):
     def _init(self, args, actors) -> None:
         super()._init(args, actors)
         self.rm = None
-        self.sync_rm_only = args.sync_rm_only
+        self.learn_rm_only = args.learn_rm_only
 
         assert args.exp_method != "no" and args.exp_pretrain == ""
         if args.exp_method == "enn_dts":
@@ -45,9 +45,11 @@ class DAPwRMLearner(DAPLearner):
             self.r_buffer.extend(all_pair_feats)
 
     def preference_learning(self, learning_round):
-        train_info = self._reward_learning()
-        if not self.sync_rm_only:
+        train_info = {}
+        # NOTE Put reward learning after policy learning otherwise program gets stuck.
+        if not self.learn_rm_only:
             train_info.update(super().preference_learning(learning_round))
+        train_info.update(self._reward_learning())
         return train_info
 
     def get_misc_info(self) -> Dict[str, Any]:
@@ -77,7 +79,7 @@ class DAPwRMLearner(DAPLearner):
 
         dist.barrier()
 
-        if not self.sync_rm_only:
+        if not self.learn_rm_only:
             # Sync policy.
             super().sync_params_to_actors()
 
@@ -86,5 +88,6 @@ class DAPwRMLearner(DAPLearner):
         total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
         if self.rm:
             self.train_rm_info = self.rm.learn(self.r_buffer, total_num_queries)
+        dist.barrier()
         self.strategy.broadcast(self.train_rm_info)
         return self.train_rm_info
