@@ -33,6 +33,42 @@ class Swish(nn.Module):
         return x
 
 
+class MLPModel(nn.Module):
+    def __init__(self, encoding_dim, hidden_dim=128, activation="relu") -> None:
+        super(MLPModel, self).__init__()
+        self.hidden_size = hidden_dim
+        self.output_dim = 1
+
+        self.nn1 = nn.Linear(encoding_dim, hidden_dim)
+        self.nn2 = nn.Linear(hidden_dim, hidden_dim)
+        self.nn_out = nn.Linear(hidden_dim, self.output_dim)
+
+        self.apply(init_weights)
+
+        if activation == "swish":
+            self.activation = Swish()
+        elif activation == "relu":
+            self.activation = nn.ReLU()
+        else:
+            raise ValueError(f"Unknown activation {activation}")
+
+    def get_params(self) -> torch.Tensor:
+        params = []
+        for pp in list(self.parameters()):
+            params.append(pp.view(-1))
+        return torch.cat(params)
+
+    def forward(self, encoding):
+        x = self.activation(self.nn1(encoding))
+        x = self.activation(self.nn2(x))
+        score = self.nn_out(x)
+        return score
+
+    def regularization(self):
+        """Gaussian prior."""
+        return (self.get_params() ** 2).sum()
+
+
 class EnsembleFC(nn.Module):
     __constants__ = ["in_features", "out_features"]
     in_features: int
@@ -64,43 +100,15 @@ class EnsembleFC(nn.Module):
         return torch.add(w_times_x, self.bias[:, None, :])  # w times x + b
 
 
-class EnsembleModel(nn.Module):
-    def __init__(self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"):
-        super(EnsembleModel, self).__init__()
-        self.hidden_size = hidden_dim
-        self.num_ensemble = num_ensemble
-        self.output_dim = 1
-
+class EnsembleModel(MLPModel):
+    def __init__(
+        self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"
+    ) -> None:
+        super().__init__(encoding_dim, hidden_dim, activation)
         self.nn1 = EnsembleFC(encoding_dim, hidden_dim, num_ensemble)
         self.nn2 = EnsembleFC(hidden_dim, hidden_dim, num_ensemble)
         self.nn_out = EnsembleFC(hidden_dim, self.output_dim, num_ensemble)
-
         self.apply(init_weights)
-
-        if activation == "swish":
-            self.activation = Swish()
-        elif activation == "relu":
-            self.activation = nn.ReLU()
-        else:
-            raise ValueError(f"Unknown activation {activation}")
-
-    def get_params(self) -> torch.Tensor:
-        """
-        Returns all the parameters concatenated in a single tensor.
-
-        Returns:
-            parameters tensor
-        """
-        params = []
-        for pp in list(self.parameters()):
-            params.append(pp.view(-1))
-        return torch.cat(params)
-
-    def forward(self, encoding):
-        x = self.activation(self.nn1(encoding))
-        x = self.activation(self.nn2(x))
-        score = self.nn_out(x)
-        return score
 
     def init(self):
         self.init_params = self.get_params().data.clone()
@@ -108,4 +116,5 @@ class EnsembleModel(nn.Module):
             self.init_params = self.init_params.cuda()
 
     def regularization(self):
+        """Prior towards independent initialization."""
         return ((self.get_params() - self.init_params) ** 2).sum()
