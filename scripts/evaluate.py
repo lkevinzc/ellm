@@ -6,7 +6,6 @@ from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
-from datasets import load_dataset
 from openai import OpenAI
 from transformers import HfArgumentParser
 from trl import BasePairwiseJudge, HfPairwiseJudge, is_openai_available
@@ -114,6 +113,9 @@ class ScriptArguments:
     data_path: str = field(
         metadata={"help": "The directory containing evaluation responses."}
     )
+    ref_data_path: str = field(
+        metadata={"help": "The directory containing reference responses."}
+    )
     judge_model: str = field(
         default="meta-llama/Meta-Llama-3-70B-Instruct",
         metadata={
@@ -129,24 +131,23 @@ class ScriptArguments:
 parser = HfArgumentParser(ScriptArguments)
 args = parser.parse_args_into_dataclasses()[0]
 
-
-raw_dataset = load_dataset(
-    "trl-internal-testing/tldr-preference-sft-trl-style", split="test"
-)
-raw_dataset = raw_dataset.select(range(1000))
-
-# Extract the prompts and reference completions
-prompts = raw_dataset["prompt"]
-reference_completions = [message[-1]["content"] for message in raw_dataset["messages"]]
-
 # Load evaluation data
 data = pd.read_json(
     args.data_path,
     orient="records",
     lines=True,
 )
-
+prompts = data["prompt"]
 model_completions = data["response"]
+reference_completions = data["reference"]
+
+if args.ref_data_path:
+    # For head-to-head comparison.
+    reference_completions = pd.read_json(
+        args.ref_data_path,
+        orient="records",
+        lines=True,
+    )["response"]
 
 # Judge the outputs
 if "gpt" in args.judge_model:
