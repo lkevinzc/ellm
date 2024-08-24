@@ -1,4 +1,4 @@
-"""Ensemble deep model to capture epistemic uncertainty."""
+"""Deep networks."""
 
 import numpy as np
 import torch
@@ -45,7 +45,6 @@ class EnsembleFC(nn.Module):
         in_features: int,
         out_features: int,
         ensemble_size: int,
-        weight_decay: float = 0.0,
         bias: bool = True,
     ) -> None:
         super(EnsembleFC, self).__init__()
@@ -55,7 +54,6 @@ class EnsembleFC(nn.Module):
         self.weight = nn.Parameter(
             torch.Tensor(ensemble_size, in_features, out_features)
         )
-        self.weight_decay = weight_decay
         if bias:
             self.bias = nn.Parameter(torch.Tensor(ensemble_size, out_features))
         else:
@@ -71,17 +69,11 @@ class EnsembleModel(nn.Module):
         super(EnsembleModel, self).__init__()
         self.hidden_size = hidden_dim
         self.num_ensemble = num_ensemble
-        self.nn1 = EnsembleFC(
-            encoding_dim, hidden_dim, num_ensemble, weight_decay=0.000025
-        )
-        self.nn2 = EnsembleFC(
-            hidden_dim, hidden_dim, num_ensemble, weight_decay=0.00005
-        )
-
         self.output_dim = 1
-        self.nn_out = EnsembleFC(
-            hidden_dim, self.output_dim, num_ensemble, weight_decay=0.0001
-        )
+
+        self.nn1 = EnsembleFC(encoding_dim, hidden_dim, num_ensemble)
+        self.nn2 = EnsembleFC(hidden_dim, hidden_dim, num_ensemble)
+        self.nn_out = EnsembleFC(hidden_dim, self.output_dim, num_ensemble)
 
         self.apply(init_weights)
 

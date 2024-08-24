@@ -1,6 +1,6 @@
 import torch
 
-from ellm.rm.ensemble import EnsembleModel
+from ellm.rm.networks import EnsembleModel
 from ellm.rm.model import default_weight_loader
 
 model = EnsembleModel(2048, 10)

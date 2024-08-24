@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 
-from ellm.rm.ensemble import EnsembleModel
+from ellm.rm.networks import EnsembleModel
 from ellm.utils.buffer import UniformBuffer
 
 
