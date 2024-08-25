@@ -79,8 +79,8 @@ def main(
             accuracy = (chosen_scores > rejected_scores).float().mean()
             all_acc.append(accuracy)
 
-            all_margin_means.append((chosen_scores - rejected_scores).mean(0))
-            all_margin_stds.append((chosen_scores - rejected_scores).std(0))
+            all_margin_means.append((chosen_scores - rejected_scores))
+            all_margin_stds.append((chosen_scores - rejected_scores))
 
         eval_acc = torch.stack(all_acc).mean().cpu()
         eval_loss = torch.stack(all_loss).mean().cpu()

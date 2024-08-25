@@ -1,14 +1,15 @@
+import math
 from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import Tensor
 from torch.optim import Adam
-from torch.optim.optimizer import ParamsT, _dispatch_sqrt, _get_value
+from torch.optim.optimizer import ParamsT
 
 
 class LAdam(Adam):
     """
-    Adam-style Stochastic Gradient Langevin Dynamics, or Langevin Adam.
+    Adam-style Stochastic Gradient Langevin Dynamics.
 
     Reference: https://arxiv.org/pdf/2009.09535.
     """
@@ -17,6 +18,8 @@ class LAdam(Adam):
         self,
         params: ParamsT,
         lr: Union[float, Tensor] = 1e-3,
+        temperature: Union[float, Tensor] = 1e-2,
+        a: Union[float, Tensor] = 1,
         betas: Tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-8,
         weight_decay: float = 0,
@@ -39,6 +42,8 @@ class LAdam(Adam):
             differentiable=False,
             fused=fused,
         )
+        self.temperature = temperature
+        self.a = a
 
     @torch.no_grad
     def step(self, closure=None):
@@ -74,7 +79,7 @@ class LAdam(Adam):
                 state_steps,
             )
 
-            _ladam(
+            _asgld(
                 params_with_grad,
                 grads,
                 exp_avgs,
@@ -88,12 +93,14 @@ class LAdam(Adam):
                 weight_decay=group["weight_decay"],
                 eps=group["eps"],
                 maximize=group["maximize"],
+                temperature=self.temperature,
+                a=self.a,
             )
 
         return loss
 
 
-def _ladam(
+def _asgld(
     params: List[Tensor],
     grads: List[Tensor],
     exp_avgs: List[Tensor],
@@ -108,6 +115,8 @@ def _ladam(
     weight_decay: float,
     eps: float,
     maximize: bool,
+    temperature: float,
+    a: float,
 ):
     for i, param in enumerate(params):
         grad = grads[i] if not maximize else -grads[i]
@@ -125,23 +134,22 @@ def _ladam(
         exp_avg.lerp_(grad, 1 - beta1)
         exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
 
-        # not capturable or differentiable
-        step = _get_value(step_t)
-
-        bias_correction1 = 1 - beta1**step
-        bias_correction2 = 1 - beta2**step
-
-        step_size = lr / bias_correction1
-
-        bias_correction2_sqrt = _dispatch_sqrt(bias_correction2)
-
         if amsgrad:
             # Maintains the maximum of all 2nd moment running avg. till now
             torch.maximum(max_exp_avg_sqs[i], exp_avg_sq, out=max_exp_avg_sqs[i])
 
             # Use the max. for normalizing running avg. of gradient
-            denom = (max_exp_avg_sqs[i].sqrt() / bias_correction2_sqrt).add_(eps)
+            denom = (max_exp_avg_sqs[i].sqrt()).add_(eps)
         else:
-            denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(eps)
+            denom = (exp_avg_sq.sqrt()).add_(eps)
 
-        param.addcdiv_(exp_avg, denom, value=-step_size)
+        # Add pure gradient
+        param.add_(grad, alpha=-lr)
+        # Add the adaptive bias term
+        am = a * exp_avg
+        param.addcdiv_(am, denom, value=-lr)
+        # Add noise
+        grad_perturb = torch.normal(
+            0, 1, size=param.shape, dtype=param.dtype, device=param.device
+        )
+        param.add_(math.sqrt(2.0 * temperature * lr) * grad_perturb)
