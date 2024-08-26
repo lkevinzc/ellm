@@ -11,6 +11,9 @@ from ellm.rm.optim import LAdam
 
 
 def main(
+    temperature=0.01,
+    a=1,
+    asgld=False,
     encoding_dim=2048,
     hidden_dim=128,
     learning_rate=1e-3,
@@ -25,6 +28,7 @@ def main(
     test_data = data[-1000:]
 
     model = MLPModel(encoding_dim, hidden_dim=hidden_dim, activation=activation).cuda()
+    model.init()
 
     wandb.init(
         project="ellm_rm",
@@ -59,7 +63,14 @@ def main(
             return loss.mean()
 
     loss_fn = PairWiseLoss()
-    optimizer = LAdam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = LAdam(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        temperature=temperature,
+        a=a,
+        asgld=asgld,
+    )
 
     def eval():
         model.eval()

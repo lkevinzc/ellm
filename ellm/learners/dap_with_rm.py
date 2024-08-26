@@ -86,7 +86,9 @@ class DAPwRMLearner(DAPLearner):
         total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
         if self.rm:
             self.r_buffer.total_num_queries = total_num_queries
-            self.train_rm_info = self.rm.learn(self.r_buffer)
+            train_rm_info = self.rm.learn(self.r_buffer)
+            assert self.train_rm_info.keys() == train_rm_info.keys()
+            self.train_rm_info = train_rm_info
         dist.barrier()
         self.strategy.broadcast(self.train_rm_info)
         return self.train_rm_info

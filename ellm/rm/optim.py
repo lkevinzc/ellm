@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 from torch import Tensor
 from torch.optim import Adam
-from torch.optim.optimizer import ParamsT
+from torch.optim.optimizer import ParamsT, _dispatch_sqrt, _get_value
 
 
 class LAdam(Adam):
@@ -28,6 +28,7 @@ class LAdam(Adam):
         foreach: Optional[bool] = None,
         maximize: bool = False,
         fused: Optional[bool] = None,
+        asgld: bool = False,
     ):
         super().__init__(
             params,
@@ -42,6 +43,7 @@ class LAdam(Adam):
             differentiable=False,
             fused=fused,
         )
+        self.asgld = asgld
         self.temperature = temperature
         self.a = a
 
@@ -79,7 +81,11 @@ class LAdam(Adam):
                 state_steps,
             )
 
-            _asgld(
+            if self.asgld:
+                cls = _asgld
+            else:
+                cls = _langevin_adam
+            cls(
                 params_with_grad,
                 grads,
                 exp_avgs,
@@ -152,4 +158,68 @@ def _asgld(
         grad_perturb = torch.normal(
             0, 1, size=param.shape, dtype=param.dtype, device=param.device
         )
-        param.add_(math.sqrt(2.0 * temperature * lr) * grad_perturb)
+        param.add_(temperature * math.sqrt(2.0 * lr) * grad_perturb)
+
+
+def _langevin_adam(
+    params: List[Tensor],
+    grads: List[Tensor],
+    exp_avgs: List[Tensor],
+    exp_avg_sqs: List[Tensor],
+    max_exp_avg_sqs: List[Tensor],
+    state_steps: List[int],
+    *,
+    amsgrad: bool,
+    beta1: float,
+    beta2: float,
+    lr: float,
+    weight_decay: float,
+    eps: float,
+    maximize: bool,
+    temperature: float,
+    a: float,
+):
+    del a
+    for i, param in enumerate(params):
+        grad = grads[i] if not maximize else -grads[i]
+        exp_avg = exp_avgs[i]
+        exp_avg_sq = exp_avg_sqs[i]
+        step_t = state_steps[i]
+
+        # update step
+        step_t += 1
+
+        if weight_decay != 0:
+            grad = grad.add(param, alpha=weight_decay)
+
+        # Decay the first and second moment running average coefficient
+        exp_avg.lerp_(grad, 1 - beta1)
+        exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
+
+        step = _get_value(step_t)
+
+        bias_correction1 = 1 - beta1**step
+        bias_correction2 = 1 - beta2**step
+
+        step_size = lr / bias_correction1
+
+        bias_correction2_sqrt = _dispatch_sqrt(bias_correction2)
+
+        if amsgrad:
+            # Maintains the maximum of all 2nd moment running avg. till now
+            torch.maximum(max_exp_avg_sqs[i], exp_avg_sq, out=max_exp_avg_sqs[i])
+
+            # Use the max. for normalizing running avg. of gradient
+            denom = (max_exp_avg_sqs[i].sqrt() / bias_correction2_sqrt).add_(eps)
+        else:
+            denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt).add_(eps)
+
+        param.addcdiv_(exp_avg, denom, value=-step_size)
+
+        # Add noise to gradient as grad_perturb
+        scaled_lr = 2 * lr * bias_correction2_sqrt / bias_correction1
+        grad_perturb = (
+            torch.normal(0, 1, size=param.shape, dtype=param.dtype, device=param.device)
+            / exp_avg_sq.sqrt().add_(eps).sqrt()
+        )
+        param.add_(temperature * math.sqrt(scaled_lr) * grad_perturb)

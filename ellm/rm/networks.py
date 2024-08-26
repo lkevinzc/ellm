@@ -64,9 +64,14 @@ class MLPModel(nn.Module):
         score = self.nn_out(x)
         return score
 
+    def init(self):
+        self.init_params = self.get_params().data.clone()
+        if torch.cuda.is_available():
+            self.init_params = self.init_params.cuda()
+
     def regularization(self):
-        """Gaussian prior."""
-        return (self.get_params() ** 2).sum()
+        """Prior towards independent initialization."""
+        return ((self.get_params() - self.init_params) ** 2).sum()
 
 
 class EnsembleFC(nn.Module):
@@ -105,6 +110,7 @@ class EnsembleModel(MLPModel):
         self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"
     ) -> None:
         super().__init__(encoding_dim, hidden_dim, activation)
+        self.num_ensemble = num_ensemble
         self.nn1 = EnsembleFC(encoding_dim, hidden_dim, num_ensemble)
         self.nn2 = EnsembleFC(hidden_dim, hidden_dim, num_ensemble)
         self.nn_out = EnsembleFC(hidden_dim, self.output_dim, num_ensemble)

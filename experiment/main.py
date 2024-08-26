@@ -79,9 +79,7 @@ if __name__ == "__main__":
     ## LmcFGTS
     parser.add_argument("--lmc_temp", type=float, default=0.01)
     parser.add_argument("--lmc_a", type=float, default=1)
-    parser.add_argument(
-        "--lmc_wd", type=float, help="weight decay for Gaussian prior", default=1e-5
-    )
+    parser.add_argument("--reg_lambda", type=float, default=10)
 
     # Evaluation params
     parser.add_argument("--best_of_n_eval", action="store_true")

@@ -70,8 +70,10 @@ class LmcFGTS(RewardModel):
     @classmethod
     def get_metrics(cls):
         return {
-            "train/rm/loss_1": 0,
-            "train/rm/loss_2": 0,
+            "train/rm/loss_rew_1": 0,
+            "train/rm/loss_rew_2": 0,
+            "train/rm/loss_reg_1": 0,
+            "train/rm/loss_reg_2": 0,
         }
 
     def __init__(self, args: Namespace) -> None:
@@ -86,22 +88,24 @@ class LmcFGTS(RewardModel):
             encoding_dim=encoding_dim,
             hidden_dim=args.rm_hidden_dim,
         )
+        self.model_1.init()
+        self.model_2.init()
+
         # LMC optimizers
         self.optimizer_1 = LAdam(
             self.model_1.parameters(),
             lr=args.rm_lr,
             temperature=args.lmc_temp,
             a=args.lmc_a,
-            weight_decay=args.lmc_wd,
         )
         self.optimizer_2 = LAdam(
             self.model_2.parameters(),
             lr=args.rm_lr,
             temperature=args.lmc_temp,
             a=args.lmc_a,
-            weight_decay=args.lmc_wd,
         )
 
+        self.reg_lambda = args.reg_lambda
         self.sgd_steps = args.rm_sgd_steps
         self.loss_fn = PairWiseLoss()
         self.train_bs = 32
@@ -134,24 +138,40 @@ class LmcFGTS(RewardModel):
         return rewards.argmax(dim=2).squeeze().permute(1, 0)
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
+        total_num_queries = buffer.total_num_queries
+
         for _ in range(self.sgd_steps):
             batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
             scores_1 = self.model_1(batch).view(self.train_bs, 2, 1)
             scores_2 = self.model_2(batch).view(self.train_bs, 2, 1)
-            loss_1 = self.loss_fn(scores_1[..., 0, :], scores_1[..., 1, :])
-            loss_2 = self.loss_fn(scores_2[..., 0, :], scores_2[..., 1, :])
+            loss_rew_1 = self.loss_fn(scores_1[..., 0, :], scores_1[..., 1, :])
+            loss_rew_2 = self.loss_fn(scores_2[..., 0, :], scores_2[..., 1, :])
+            loss_reg_1 = (
+                self.reg_lambda
+                * self.train_bs
+                / total_num_queries
+                * self.model_1.regularization()
+            )
+            loss_reg_2 = (
+                self.reg_lambda
+                * self.train_bs
+                / total_num_queries
+                * self.model_2.regularization()
+            )
 
             self.optimizer_1.zero_grad()
-            loss_1.backward()
+            (loss_rew_1 + loss_reg_1).backward()
             self.optimizer_1.step()
 
             self.optimizer_2.zero_grad()
-            loss_2.backward()
+            (loss_rew_2 + loss_reg_2).backward()
             self.optimizer_2.step()
 
         return {
-            "train/rm/loss_1": loss_1.detach(),
-            "train/rm/loss_2": loss_2.detach(),
+            "train/rm/loss_rew_1": loss_rew_1.detach(),
+            "train/rm/loss_rew_2": loss_rew_2.detach(),
+            "train/rm/loss_reg_1": loss_reg_1.detach(),
+            "train/rm/loss_reg_2": loss_reg_2.detach(),
         }
 
 
@@ -223,7 +243,7 @@ class EnnDTS(RewardModel):
         return torch.cat([first_actions, second_actions], dim=-1)
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
-        total_num_queries = self.buffer.total_num_queries
+        total_num_queries = buffer.total_num_queries
         for _ in range(self.sgd_steps):
             batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
             batch_inp = batch[None, :, :].repeat([self.model.num_ensemble, 1, 1])
