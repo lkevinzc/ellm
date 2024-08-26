@@ -197,6 +197,7 @@ class EnnDTS(RewardModel):
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)
         self.reg_lambda = args.enn_lambda
         self.sgd_steps = args.rm_sgd_steps
+        self.rnd_sample = args.rm_rnd_sample
         self.loss_fn = PairWiseLoss()
         self.train_bs = 32
         self.infer_bs = 32
@@ -238,7 +239,9 @@ class EnnDTS(RewardModel):
             second_actions[valid_idx] = actions[valid_idx]
             if -1 not in second_actions:
                 break
-        rand_actions = torch.randint_like(second_actions, N)
+        rand_actions = (
+            torch.randint_like(second_actions, N) if self.rnd_sample else first_actions
+        )
         second_actions = torch.where(second_actions == -1, rand_actions, second_actions)
         return torch.cat([first_actions, second_actions], dim=-1)
 
