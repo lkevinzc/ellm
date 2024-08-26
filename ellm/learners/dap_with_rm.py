@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 
 from ellm.learners.dap import DAPLearner
-from ellm.rm.model import EnnDTS
+from ellm.rm import model
 from ellm.types import PreferenceData
 from ellm.utils.buffer import UniformBuffer
 from ellm.utils.distributed import torch_type_codec
@@ -19,15 +19,13 @@ class DAPwRMLearner(DAPLearner):
         self.learn_rm_only = args.learn_rm_only
 
         assert args.exp_method != "no" and args.exp_pretrain == ""
-        if args.exp_method == "enn_dts":
-            if self.strategy.is_rank_0():
-                self.rm = EnnDTS(args).to(torch.cuda.current_device())
-                self.r_buffer = UniformBuffer(
-                    args.r_buffer_maxlen, device=torch.cuda.current_device()
-                )
-            self.train_rm_info = EnnDTS.get_metrics()
-        else:
-            raise NotImplementedError
+        rm_cls = getattr(model, args.exp_method)
+        if self.strategy.is_rank_0():
+            self.rm: model.RewardModel = rm_cls(args).to(torch.cuda.current_device())
+            self.r_buffer = UniformBuffer(
+                args.r_buffer_maxlen, device=torch.cuda.current_device()
+            )
+        self.train_rm_info = rm_cls.get_metrics()
 
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
         super().process_preference_data(data_list, raw_prompts)
@@ -87,7 +85,8 @@ class DAPwRMLearner(DAPLearner):
         # Aggregate data from workers.
         total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
         if self.rm:
-            self.train_rm_info = self.rm.learn(self.r_buffer, total_num_queries)
+            self.r_buffer.total_num_queries = total_num_queries
+            self.train_rm_info = self.rm.learn(self.r_buffer)
         dist.barrier()
         self.strategy.broadcast(self.train_rm_info)
         return self.train_rm_info
