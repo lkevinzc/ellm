@@ -12,7 +12,7 @@ flags.DEFINE_string(
     "pretrain", "cleanrl/EleutherAI_pythia-1b-deduped__sft__tldr", "model name"
 )
 flags.DEFINE_integer("n_sampling", 2, "number of samples for exploration")
-flags.DEFINE_enum("exp_method", "no", ["no", "enn_dts"], "exploration method")
+flags.DEFINE_enum("exp_method", "no", ["no", "EnnDTS"], "exploration method")
 flags.DEFINE_string("exp_pretrain", "", "pretrained exploration model")
 flags.DEFINE_bool("best_of_n_eval", False, "Best-of-N generation for evaluation")
 flags.DEFINE_integer("num_bon", 2, "number of samples for BoN")
@@ -42,10 +42,10 @@ def main(_):
             {
                 **FLAGS.flag_values_dict(),
                 "num_ensemble": 10,
-                "enn_lr": 1e-3,
+                "rm_lr": 1e-3,
                 "enn_lambda": 0.1,
-                "enn_hidden_dim": 128,
-                "enn_sgd_steps": 1,
+                "rm_hidden_dim": 128,
+                "rm_sgd_steps": 1,
                 "bon_temperature": 0.3,
             }
         ),

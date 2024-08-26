@@ -1,4 +1,4 @@
-"""Ensemble deep model to capture epistemic uncertainty."""
+"""Deep networks."""
 
 import numpy as np
 import torch
@@ -33,55 +33,15 @@ class Swish(nn.Module):
         return x
 
 
-class EnsembleFC(nn.Module):
-    __constants__ = ["in_features", "out_features"]
-    in_features: int
-    out_features: int
-    ensemble_size: int
-    weight: torch.Tensor
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        ensemble_size: int,
-        weight_decay: float = 0.0,
-        bias: bool = True,
-    ) -> None:
-        super(EnsembleFC, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.ensemble_size = ensemble_size
-        self.weight = nn.Parameter(
-            torch.Tensor(ensemble_size, in_features, out_features)
-        )
-        self.weight_decay = weight_decay
-        if bias:
-            self.bias = nn.Parameter(torch.Tensor(ensemble_size, out_features))
-        else:
-            self.register_parameter("bias", None)
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        w_times_x = torch.bmm(input, self.weight)
-        return torch.add(w_times_x, self.bias[:, None, :])  # w times x + b
-
-
-class EnsembleModel(nn.Module):
-    def __init__(self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"):
-        super(EnsembleModel, self).__init__()
+class MLPModel(nn.Module):
+    def __init__(self, encoding_dim, hidden_dim=128, activation="relu") -> None:
+        super(MLPModel, self).__init__()
         self.hidden_size = hidden_dim
-        self.num_ensemble = num_ensemble
-        self.nn1 = EnsembleFC(
-            encoding_dim, hidden_dim, num_ensemble, weight_decay=0.000025
-        )
-        self.nn2 = EnsembleFC(
-            hidden_dim, hidden_dim, num_ensemble, weight_decay=0.00005
-        )
-
         self.output_dim = 1
-        self.nn_out = EnsembleFC(
-            hidden_dim, self.output_dim, num_ensemble, weight_decay=0.0001
-        )
+
+        self.nn1 = nn.Linear(encoding_dim, hidden_dim)
+        self.nn2 = nn.Linear(hidden_dim, hidden_dim)
+        self.nn_out = nn.Linear(hidden_dim, self.output_dim)
 
         self.apply(init_weights)
 
@@ -93,12 +53,6 @@ class EnsembleModel(nn.Module):
             raise ValueError(f"Unknown activation {activation}")
 
     def get_params(self) -> torch.Tensor:
-        """
-        Returns all the parameters concatenated in a single tensor.
-
-        Returns:
-            parameters tensor
-        """
         params = []
         for pp in list(self.parameters()):
             params.append(pp.view(-1))
@@ -116,4 +70,57 @@ class EnsembleModel(nn.Module):
             self.init_params = self.init_params.cuda()
 
     def regularization(self):
+        """Prior towards independent initialization."""
+        return ((self.get_params() - self.init_params) ** 2).sum()
+
+
+class EnsembleFC(nn.Module):
+    __constants__ = ["in_features", "out_features"]
+    in_features: int
+    out_features: int
+    ensemble_size: int
+    weight: torch.Tensor
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        ensemble_size: int,
+        bias: bool = True,
+    ) -> None:
+        super(EnsembleFC, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.ensemble_size = ensemble_size
+        self.weight = nn.Parameter(
+            torch.Tensor(ensemble_size, in_features, out_features)
+        )
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(ensemble_size, out_features))
+        else:
+            self.register_parameter("bias", None)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        w_times_x = torch.bmm(input, self.weight)
+        return torch.add(w_times_x, self.bias[:, None, :])  # w times x + b
+
+
+class EnsembleModel(MLPModel):
+    def __init__(
+        self, encoding_dim, num_ensemble, hidden_dim=128, activation="relu"
+    ) -> None:
+        super().__init__(encoding_dim, hidden_dim, activation)
+        self.num_ensemble = num_ensemble
+        self.nn1 = EnsembleFC(encoding_dim, hidden_dim, num_ensemble)
+        self.nn2 = EnsembleFC(hidden_dim, hidden_dim, num_ensemble)
+        self.nn_out = EnsembleFC(hidden_dim, self.output_dim, num_ensemble)
+        self.apply(init_weights)
+
+    def init(self):
+        self.init_params = self.get_params().data.clone()
+        if torch.cuda.is_available():
+            self.init_params = self.init_params.cuda()
+
+    def regularization(self):
+        """Prior towards independent initialization."""
         return ((self.get_params() - self.init_params) ** 2).sum()

@@ -6,7 +6,7 @@ import torch
 import vllm
 
 from ellm.exploration import ExplorationResults, Explorer
-from ellm.rm.model import EnnDTS, default_weight_loader
+from ellm.rm import model
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
 from ellm.utils.ipc import PlasmaShmClient
@@ -50,18 +50,16 @@ class Actor:
             assert (
                 sampling_params.n == 2
             ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
-        elif args.exp_method == "enn_dts":
+        else:
             assert sampling_params.n > 2
-            self.explorer = Explorer(EnnDTS(args))
+            self.explorer = Explorer(getattr(model, args.exp_method)(args))
             if args.exp_pretrain:
                 print(f"Loading pretrained ENN from {args.exp_pretrain}")
-                self.explorer.reward_model.model.load_state_dict(
+                self.explorer.reward_model.load_state_dict(
                     torch.load(args.exp_pretrain)
                 )
             else:
                 self.learning_rm = True  # Learn RM online.
-        else:
-            raise NotImplementedError
 
         # ###################################
         # ####  Best-of-N for Evaluation ####
@@ -193,7 +191,7 @@ class Actor:
         weight = torch.empty(shape, dtype=dtype, device="cuda")
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
         params_dict = dict(self.explorer.reward_model.named_parameters())
-        default_weight_loader(params_dict[name], weight)
+        model.default_weight_loader(params_dict[name], weight)
         print(f"update reward model weight {name}")
         del weight
 

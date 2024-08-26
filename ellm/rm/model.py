@@ -1,18 +1,23 @@
 import abc
 import random
 from argparse import Namespace
-from typing import Any, Dict, Iterable
+from typing import Any, Dict
 
 import einops
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
 
-from ellm.rm.ensemble import EnsembleModel
+from ellm.rm.networks import EnsembleModel, MLPModel
+from ellm.rm.optim import LAdam
 from ellm.utils.buffer import UniformBuffer
 
 
 class RewardModel(abc.ABC, nn.Module):
+
+    @abc.abstractclassmethod
+    def get_metrics(cls):
+        """Get learning metrics."""
 
     @abc.abstractmethod
     def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
@@ -37,7 +42,7 @@ class RewardModel(abc.ABC, nn.Module):
         """
 
     @abc.abstractmethod
-    def learn(self, dataset: Iterable) -> Dict[str, Any]:
+    def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         """Learn the reward model based on preference data."""
 
 
@@ -59,6 +64,117 @@ class PairWiseLoss(nn.Module):
         return loss.mean()
 
 
+class LmcFGTS(RewardModel):
+    "Feel-Good Thompson Sampling for contextual dueling bandits based on Langevin Monte Carlo."
+
+    @classmethod
+    def get_metrics(cls):
+        return {
+            "train/rm/loss_rew_1": 0,
+            "train/rm/loss_rew_2": 0,
+            "train/rm/loss_reg_1": 0,
+            "train/rm/loss_reg_2": 0,
+        }
+
+    def __init__(self, args: Namespace) -> None:
+        super().__init__()
+        encoding_dim = 2048  # Fixed due to PairRM's backbone
+        # Posterior models
+        self.model_1 = MLPModel(
+            encoding_dim=encoding_dim,
+            hidden_dim=args.rm_hidden_dim,
+        )
+        self.model_2 = MLPModel(
+            encoding_dim=encoding_dim,
+            hidden_dim=args.rm_hidden_dim,
+        )
+        self.model_1.init()
+        self.model_2.init()
+
+        # LMC optimizers
+        self.optimizer_1 = LAdam(
+            self.model_1.parameters(),
+            lr=args.rm_lr,
+            temperature=args.lmc_temp,
+            a=args.lmc_a,
+        )
+        self.optimizer_2 = LAdam(
+            self.model_2.parameters(),
+            lr=args.rm_lr,
+            temperature=args.lmc_temp,
+            a=args.lmc_a,
+        )
+
+        self.reg_lambda = args.reg_lambda
+        self.sgd_steps = args.rm_sgd_steps
+        self.loss_fn = PairWiseLoss()
+        self.train_bs = 32
+        self.infer_bs = 32
+
+    @torch.no_grad
+    def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
+        M, N, _ = features.shape
+        features = einops.rearrange(features, "m n d -> (m n) d")
+        rewards_1 = []
+        rewards_2 = []
+        for ndx in range(0, len(features), self.infer_bs):
+            batch_feat = features[ndx : min(ndx + self.infer_bs, len(features))]
+            rewards_1.append(self.model_1(batch_feat))
+            rewards_2.append(self.model_2(batch_feat))
+        rewards_1 = torch.cat(rewards_1).view(M, N, 1)
+        rewards_2 = torch.cat(rewards_2).view(M, N, 1)
+        return torch.stack([rewards_1, rewards_2])  # (2, M, N, 1)
+
+    @torch.no_grad
+    def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
+        rewards = self._get_rewards(features)  # (2, M, N, 1)
+        avg_rewards = rewards.mean(0)  # (M, N, 1)
+        best_actions = avg_rewards.argmax(dim=1)  # (M, 1)
+        return best_actions
+
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+        rewards = self._get_rewards(features)
+        return rewards.argmax(dim=2).squeeze().permute(1, 0)
+
+    def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
+        total_num_queries = buffer.total_num_queries
+
+        for _ in range(self.sgd_steps):
+            batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
+            scores_1 = self.model_1(batch).view(self.train_bs, 2, 1)
+            scores_2 = self.model_2(batch).view(self.train_bs, 2, 1)
+            loss_rew_1 = self.loss_fn(scores_1[..., 0, :], scores_1[..., 1, :])
+            loss_rew_2 = self.loss_fn(scores_2[..., 0, :], scores_2[..., 1, :])
+            loss_reg_1 = (
+                self.reg_lambda
+                * self.train_bs
+                / total_num_queries
+                * self.model_1.regularization()
+            )
+            loss_reg_2 = (
+                self.reg_lambda
+                * self.train_bs
+                / total_num_queries
+                * self.model_2.regularization()
+            )
+
+            self.optimizer_1.zero_grad()
+            (loss_rew_1 + loss_reg_1).backward()
+            self.optimizer_1.step()
+
+            self.optimizer_2.zero_grad()
+            (loss_rew_2 + loss_reg_2).backward()
+            self.optimizer_2.step()
+
+        return {
+            "train/rm/loss_rew_1": loss_rew_1.detach(),
+            "train/rm/loss_rew_2": loss_rew_2.detach(),
+            "train/rm/loss_reg_1": loss_reg_1.detach(),
+            "train/rm/loss_reg_2": loss_reg_2.detach(),
+        }
+
+
 class EnnDTS(RewardModel):
     """Double Thompson Sampling based on ensemble."""
 
@@ -73,14 +189,14 @@ class EnnDTS(RewardModel):
     def __init__(self, args: Namespace) -> None:
         super().__init__()
         self.model = EnsembleModel(
-            encoding_dim=2048,  # Fixed due to PairRM
+            encoding_dim=2048,  # Fixed due to PairRM's backbone
             num_ensemble=args.num_ensemble,
-            hidden_dim=args.enn_hidden_dim,
+            hidden_dim=args.rm_hidden_dim,
         )
         self.model.init()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=args.enn_lr)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)
         self.reg_lambda = args.enn_lambda
-        self.sgd_steps = args.enn_sgd_steps
+        self.sgd_steps = args.rm_sgd_steps
         self.loss_fn = PairWiseLoss()
         self.train_bs = 32
         self.infer_bs = 32
@@ -126,7 +242,8 @@ class EnnDTS(RewardModel):
         second_actions = torch.where(second_actions == -1, rand_actions, second_actions)
         return torch.cat([first_actions, second_actions], dim=-1)
 
-    def learn(self, buffer: UniformBuffer, total_num_queries: int) -> Dict[str, Any]:
+    def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
+        total_num_queries = buffer.total_num_queries
         for _ in range(self.sgd_steps):
             batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
             batch_inp = batch[None, :, :].repeat([self.model.num_ensemble, 1, 1])

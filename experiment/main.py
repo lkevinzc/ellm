@@ -63,17 +63,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "enn_dts"],
+        choices=["no", "EnnDTS", "LmcFGTS"],
         default="no",
         help="Types of exploration.",
     )
     parser.add_argument("--exp_pretrain", type=str, default="")
-    ## enn_dts
+    parser.add_argument("--rm_lr", type=float, default=1e-3)
+    parser.add_argument("--rm_hidden_dim", type=int, default=128)
+    parser.add_argument("--rm_sgd_steps", type=int, default=1)
+
+    ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=10)
-    parser.add_argument("--enn_lr", type=float, default=1e-3)
     parser.add_argument("--enn_lambda", type=float, default=0.1)
-    parser.add_argument("--enn_hidden_dim", type=int, default=128)
-    parser.add_argument("--enn_sgd_steps", type=int, default=1)
+
+    ## LmcFGTS
+    parser.add_argument("--lmc_temp", type=float, default=0.01)
+    parser.add_argument("--lmc_a", type=float, default=1)
+    parser.add_argument("--reg_lambda", type=float, default=10)
 
     # Evaluation params
     parser.add_argument("--best_of_n_eval", action="store_true")

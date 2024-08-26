@@ -9,7 +9,7 @@ from ellm.utils.ipc import PlasmaShmClient, PlasmaShmServer
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("num_actors", 2, "The number of concurrent actors.")
-flags.DEFINE_enum("exp_method", "no", ["no", "enn_dts"], "exploration method")
+flags.DEFINE_enum("exp_method", "no", ["no", "EnnDTS"], "exploration method")
 flags.DEFINE_string("exp_pretrain", "", "pretrained exploration model")
 
 
@@ -77,10 +77,10 @@ def main(_):
             {
                 **FLAGS.flag_values_dict(),
                 "num_ensemble": 10,
-                "enn_lr": 1e-3,
+                "rm_lr": 1e-3,
                 "enn_lambda": 0.1,
-                "enn_hidden_dim": 128,
-                "enn_sgd_steps": 1,
+                "rm_hidden_dim": 128,
+                "rm_sgd_steps": 1,
             }
         ),
     )
