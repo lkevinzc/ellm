@@ -76,6 +76,7 @@ if __name__ == "__main__":
 
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
+    parser.add_argument("--enn_max_try", type=int, default=10)
     parser.add_argument("--enn_lambda", type=float, default=0.1)
 
     ## LmcFGTS

@@ -196,6 +196,8 @@ class EnnDTS(RewardModel):
 
     def __init__(self, args: Namespace) -> None:
         super().__init__()
+        assert args.enn_max_try <= args.num_ensemble // 2
+
         self.model = EnsembleModel(
             encoding_dim=2048,  # Fixed due to PairRM's backbone
             num_ensemble=args.num_ensemble,
@@ -204,6 +206,7 @@ class EnnDTS(RewardModel):
         self.model.init()
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)
         self.reg_lambda = args.enn_lambda
+        self.max_resample = args.enn_max_try
         self.sgd_steps = args.rm_sgd_steps
         self.loss_fn = PairWiseLoss()
         self.train_bs = 32
@@ -245,7 +248,7 @@ class EnnDTS(RewardModel):
         random.shuffle(s2)
         first_actions = best_actions[s1[0]]
         second_actions = torch.ones_like(first_actions) * -1
-        for actions in best_actions[s2]:
+        for actions in best_actions[s2[: self.max_resample]]:
             valid_idx = (actions != first_actions) * (second_actions == -1)
             second_actions[valid_idx] = actions[valid_idx]
             if -1 not in second_actions:
