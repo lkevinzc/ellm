@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -177,7 +177,7 @@ def _zero_pad_sequences(sequences, side: str = "left", value=0):
 def _preprocess_preference_data(
     data: PreferenceData,
     apply_chat_template=None,
-) -> str:
+) -> Tuple[str, str, str, bool]:
     if apply_chat_template:
         prompt = {"content": data.prompt, "role": "user"}
         chosen = {"content": data.chosen_response, "role": "assistant"}
@@ -197,7 +197,7 @@ def _preprocess_preference_data(
         # if input_template:
         #     prompt = input_template.format(prompt)
 
-    return prompt, chosen, rejected
+    return prompt, chosen, rejected, data.same
 
 
 class PromptDataset(Dataset):
@@ -287,6 +287,7 @@ class PreferenceDataset(Dataset):
         self.chosen_responses = []
         self.rejected_responses = []
         self.prompt_ids_lens = []
+        self.same_masks = []
 
         self.tokenizer = tokenizer
         self.strategy = strategy
@@ -306,7 +307,7 @@ class PreferenceDataset(Dataset):
         self.strategy.print("Constructing preference dataset...")
 
         for data in tqdm(buffer, disable=not self.strategy.is_rank_0()):
-            prompt, chosen, rejected = _preprocess_preference_data(
+            prompt, chosen, rejected, same_mask = _preprocess_preference_data(
                 data,
                 apply_chat_template,
             )
@@ -327,6 +328,7 @@ class PreferenceDataset(Dataset):
             self.prompts.append(prompt)
             self.chosen_responses.append(chosen)
             self.rejected_responses.append(rejected)
+            self.same_masks.append(same_mask)
 
     def __len__(self):
         return len(self.prompts)
@@ -337,7 +339,10 @@ class PreferenceDataset(Dataset):
             self.chosen_responses[idx],
             self.rejected_responses[idx],
         )
-        extra = self.prompt_ids_lens[idx]
+        extra = {
+            "prompt_ids_lens": self.prompt_ids_lens[idx],
+            "same_masks": self.same_masks[idx],
+        }
 
         chosen = (prompt + chosen).rstrip("\n")
         if not chosen.endswith(self.tokenizer.eos_token):
@@ -380,13 +385,17 @@ class PreferenceDataset(Dataset):
         chosen_masks = []
         rejected_ids = []
         rejected_masks = []
-        extras = []
+        extras = {
+            "prompt_ids_lens": [],
+            "same_masks": [],
+        }
         for chosen_id, chosen_mask, rejected_id, rejected_mask, extra in item_list:
             chosen_ids.append(chosen_id)
             chosen_masks.append(chosen_mask)
             rejected_ids.append(rejected_id)
             rejected_masks.append(rejected_mask)
-            extras.append(extra)
+            extras["prompt_ids_lens"].append(extra["prompt_ids_lens"])
+            extras["same_masks"].append(extra["same_masks"])
 
         padding_side = "right"
         chosen_ids = _zero_pad_sequences(

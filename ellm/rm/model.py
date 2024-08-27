@@ -57,13 +57,14 @@ class PairWiseLoss(nn.Module):
         self,
         chosen_reward: torch.Tensor,
         reject_reward: torch.Tensor,
+        mask: torch.Tensor,
         margin: torch.Tensor = None,
     ) -> torch.Tensor:
         if margin is not None:
             loss = -F.logsigmoid(chosen_reward - reject_reward - margin)
         else:
             loss = -F.logsigmoid(chosen_reward - reject_reward)
-        return loss.mean()
+        return (loss * mask).mean()
 
 
 class LmcFGTS(RewardModel):
@@ -72,10 +73,8 @@ class LmcFGTS(RewardModel):
     @classmethod
     def get_metrics(cls):
         return {
-            "train/rm/loss_rew_1": 0,
-            "train/rm/loss_rew_2": 0,
-            "train/rm/loss_reg_1": 0,
-            "train/rm/loss_reg_2": 0,
+            "train/rm/loss_rew": 0,
+            "train/rm/loss_reg": 0,
         }
 
     def __init__(self, args: Namespace) -> None:
@@ -149,11 +148,16 @@ class LmcFGTS(RewardModel):
         total_num_queries = buffer.total_num_queries
 
         for _ in range(self.sgd_steps):
-            batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
-            scores_1 = self.model_1(batch).view(self.train_bs, 2, 1)
-            scores_2 = self.model_2(batch).view(self.train_bs, 2, 1)
-            loss_rew_1 = self.loss_fn(scores_1[..., 0, :], scores_1[..., 1, :])
-            loss_rew_2 = self.loss_fn(scores_2[..., 0, :], scores_2[..., 1, :])
+            batch = buffer.sample(self.train_bs)
+            pair_feats = batch.pair_features.view(2 * self.train_bs, -1)
+            scores_1 = self.model_1(pair_feats).view(self.train_bs, 2, 1)
+            scores_2 = self.model_2(pair_feats).view(self.train_bs, 2, 1)
+            loss_rew_1 = self.loss_fn(
+                scores_1[..., 0, :], scores_1[..., 1, :], batch.loss_masks
+            )
+            loss_rew_2 = self.loss_fn(
+                scores_2[..., 0, :], scores_2[..., 1, :], batch.loss_masks
+            )
             loss_reg_1 = (
                 self.reg_lambda
                 * self.train_bs
@@ -176,10 +180,8 @@ class LmcFGTS(RewardModel):
             self.optimizer_2.step()
 
         return {
-            "train/rm/loss_rew_1": loss_rew_1.detach(),
-            "train/rm/loss_rew_2": loss_rew_2.detach(),
-            "train/rm/loss_reg_1": loss_reg_1.detach(),
-            "train/rm/loss_reg_2": loss_reg_2.detach(),
+            "train/rm/loss_rew": ((loss_rew_1 + loss_rew_2) / 2).detach(),
+            "train/rm/loss_reg": ((loss_reg_1 + loss_reg_2) / 2).detach(),
         }
 
 
@@ -261,12 +263,15 @@ class EnnDTS(RewardModel):
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
         for _ in range(self.sgd_steps):
-            batch = buffer.sample(self.train_bs).view(2 * self.train_bs, -1)
-            batch_inp = batch[None, :, :].repeat([self.model.num_ensemble, 1, 1])
+            batch = buffer.sample(self.train_bs)
+            pair_feats = batch.pair_features.view(2 * self.train_bs, -1)
+            batch_inp = pair_feats[None, :, :].repeat([self.model.num_ensemble, 1, 1])
             scores = self.model(batch_inp)
             scores = scores.view(self.model.num_ensemble, self.train_bs, 2, 1)
             chosen_scores, rejected_scores = scores[..., 0, :], scores[..., 1, :]
-            loss_rew = self.loss_fn(chosen_scores, rejected_scores)
+            loss_rew = self.loss_fn(
+                chosen_scores, rejected_scores, batch.loss_masks[None]
+            )
             loss_reg = (
                 self.reg_lambda
                 * self.train_bs

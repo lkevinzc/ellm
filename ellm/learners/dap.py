@@ -15,18 +15,21 @@ class DAPLearner(LearnerBase):
 
     def learning_step(self, data):
         device = torch.cuda.current_device()
-        chosen_ids, c_mask, rejected_ids, r_mask, prompt_id_lens = data
+        chosen_ids, c_mask, rejected_ids, r_mask, extra = data
         chosen_ids = chosen_ids.squeeze(1).to(device)
         c_mask = c_mask.squeeze(1).to(device)
         rejected_ids = rejected_ids.squeeze(1).to(device)
         r_mask = r_mask.squeeze(1).to(device)
+
+        prompt_id_lens = extra["prompt_ids_lens"]
+        loss_masks = 1 - torch.tensor(extra["same_masks"]).float().to(device)
 
         chosen_logps, rejected_logps, _ = self.concatenated_forward(
             self.model, chosen_ids, c_mask, rejected_ids, r_mask, prompt_id_lens
         )
 
         preference_loss, chosen_reward, rejected_reward = self.loss(
-            chosen_logps, rejected_logps
+            chosen_logps, rejected_logps, loss_masks
         )
 
         loss = preference_loss
@@ -34,7 +37,7 @@ class DAPLearner(LearnerBase):
         self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler)
 
         infos = {
-            "loss": loss,
+            "loss": loss.detach(),
             "chosen_reward": chosen_reward,
             "rejected_reward": rejected_reward,
         }

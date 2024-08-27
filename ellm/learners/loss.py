@@ -27,6 +27,7 @@ class SimPOLoss(nn.Module):
         self,
         policy_chosen_logps: torch.Tensor,
         policy_rejected_logps: torch.Tensor,
+        loss_masks: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         logits = pi_logratios - self.gamma_beta_ratio
@@ -38,7 +39,7 @@ class SimPOLoss(nn.Module):
         elif self.loss_type == "hinge":
             losses = torch.relu(1 - self.beta * logits)
 
-        loss = losses.mean()
+        loss = (losses * loss_masks).mean()
         chosen_rewards = self.beta * policy_chosen_logps.detach()
         rejected_rewards = self.beta * policy_rejected_logps.detach()
 
