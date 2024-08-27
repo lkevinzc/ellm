@@ -13,10 +13,11 @@ from ellm.rm.model import RewardModel
 class ExplorationResults:
     dueling_candidates: Dict[int, List[str]]
     candidate_features: torch.Tensor
+    init_clash: List[bool]
 
 
 class Explorer:
-    def __init__(self, reward_model: RewardModel) -> None:
+    def __init__(self, reward_model: RewardModel, random_sampling: bool) -> None:
         self.backbone = DebertaV2PairRM.from_pretrained(
             "llm-blender/PairRM-hf", device_map="cuda:0"
         ).eval()
@@ -28,6 +29,7 @@ class Explorer:
         self.backbone_bs = 8
 
         self.reward_model = reward_model.cuda()
+        self.random_sampling = random_sampling
 
     def best_of_n(
         self,
@@ -69,9 +71,22 @@ class Explorer:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         features = self._get_features(prompts, candidates)  # (M, N, d)
-        selected_candidate_indices = self.reward_model.get_duel_actions(
+        first_indices, second_indices = self.reward_model.get_duel_actions(
             features
-        ).cpu()  # (M, 2)
+        )  # both (M, 1)
+
+        # In the case where both responses are the same, do random sampling
+        init_clash = (second_indices == first_indices).cpu().squeeze().tolist()
+        if self.random_sampling:
+            N = features.shape[1]
+            rand_indices = torch.randint_like(second_indices, N)
+            second_indices = torch.where(
+                second_indices == first_indices, rand_indices, second_indices
+            )
+
+        selected_candidate_indices = torch.cat(
+            [first_indices, second_indices], dim=-1
+        ).cpu()
         dueling_candidates = {}
         for i, sel_idx in enumerate(selected_candidate_indices):
             dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
@@ -87,6 +102,7 @@ class Explorer:
                 if return_features
                 else None
             ),
+            init_clash=init_clash,
         )
 
     def _get_features(
