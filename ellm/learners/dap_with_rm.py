@@ -5,7 +5,7 @@ import torch.distributed as dist
 
 from ellm.learners.dap import DAPLearner
 from ellm.rm import model
-from ellm.types import PreferenceData
+from ellm.types import PreferenceData, RewardData
 from ellm.utils.buffer import UniformBuffer
 from ellm.utils.distributed import torch_type_codec
 
@@ -22,9 +22,7 @@ class DAPwRMLearner(DAPLearner):
         rm_cls = getattr(model, args.exp_method)
         if self.strategy.is_rank_0():
             self.rm: model.RewardModel = rm_cls(args).to(torch.cuda.current_device())
-            self.r_buffer = UniformBuffer(
-                args.r_buffer_maxlen, device=torch.cuda.current_device()
-            )
+            self.r_buffer = UniformBuffer(args.r_buffer_maxlen)
         self.train_rm_info = rm_cls.get_metrics()
 
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
@@ -38,9 +36,18 @@ class DAPwRMLearner(DAPLearner):
         pair_feats = torch.cat([c_feats, r_feats], dim=1).to(
             torch.cuda.current_device()
         )  # (micro_b, 2, d)
+        same_masks = torch.tensor([data.same for data in data_list]).to(
+            torch.cuda.current_device()
+        )  # (micro_b,)
+
         all_pair_feats = self.strategy.gather(pair_feats)
+        all_same_masks = self.strategy.gather(same_masks)
         if self.rm:
-            self.r_buffer.extend(all_pair_feats)
+            self.r_buffer.extend(
+                RewardData(
+                    pair_features=all_pair_feats, loss_masks=1 - all_same_masks.float()
+                )
+            )
 
     def preference_learning(self, learning_round):
         train_info = {}

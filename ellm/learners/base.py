@@ -344,8 +344,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 desc="Train step of epoch %d" % epoch,
                 disable=not self.strategy.is_rank_0(),
             )
-            acc_mean = 0
-            loss_mean = 0
+            acc_mean = []
+            loss_mean = []
+            reward_margin = []
             self.model.train()
             for data in dataloader:
                 infos = self.learning_step(data)
@@ -354,11 +355,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 loss = infos["loss"]
                 chosen_reward = infos["chosen_reward"]
                 rejected_reward = infos["rejected_reward"]
-                acc_mean = (
-                    acc_mean * 0.9
-                    + 0.1 * (chosen_reward > rejected_reward).float().mean().item()
-                )
-                loss_mean = loss_mean * 0.9 + 0.1 * loss.item()
+                acc_mean.append((chosen_reward > rejected_reward).float().mean().item())
+                loss_mean.append(loss.cpu().item())
+                reward_margin.append((chosen_reward - rejected_reward).mean().item())
 
                 step_bar.update()
                 self.global_step += 1
@@ -372,9 +371,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "epoch": epoch + 1,
             "chosen_reward": chosen_reward.mean().item(),
             "rejected_reward": rejected_reward.mean().item(),
-            "reward_margin": (chosen_reward - rejected_reward).mean().item(),
-            "acc_mean": acc_mean,
-            "loss_mean": loss_mean,
+            "acc_mean": np.mean(acc_mean),
+            "loss_mean": np.mean(loss_mean),
+            "reward_margin": np.mean(reward_margin),
             "learning_round": learning_round,
         }
         train_info = {

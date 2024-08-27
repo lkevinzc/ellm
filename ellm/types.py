@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, NamedTuple
 
 import torch
 
@@ -16,3 +16,8 @@ class PreferenceData:
     init_clash: bool
     same: bool
     info: Metric
+
+
+class RewardData(NamedTuple):
+    pair_features: torch.Tensor  # (B, 2, d)
+    loss_masks: torch.Tensor  # (B,)
