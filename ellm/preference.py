@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 
 import numpy as np
 import torch
+import tree
 
 from ellm.actor import Actor
 from ellm.types import Metric, PreferenceData
@@ -66,6 +67,9 @@ class PreferenceCollector:
             "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
         }
 
-        metric.update(preference_data.info)
+        mean_info = tree.map_structure(
+            lambda *x: np.mean(x), *[p.info for p in preference_data]
+        )
+        metric.update(mean_info)
 
         return preference_data, metric
