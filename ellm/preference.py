@@ -1,11 +1,11 @@
 import time
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
 
 from ellm.actor import Actor
-from ellm.types import PreferenceData
+from ellm.types import Metric, PreferenceData
 from ellm.utils.deepspeed import DeepspeedStrategy
 from ellm.utils.ipc import PlasmaShmClient, PlasmaShmServer
 
@@ -37,18 +37,24 @@ class PreferenceCollector:
         )
         return {k: v.to(device) for k, v in batch.items()}
 
-    def __call__(self, prompts: Union[str, List[str]]) -> List[PreferenceData]:
+    def __call__(
+        self, prompts: Union[str, List[str]], refs: Union[str, List[str]]
+    ) -> Tuple[List[PreferenceData], Metric]:
         # generate response & get feedback
         st_time = time.time()
         rank = torch.distributed.get_rank()
         actor = self.actors[rank % len(self.actors)]
 
-        handle = actor.step(prompts)
+        if self.strategy.args.online_evaluation:
+            handle = actor.step(prompts, refs)
+        else:
+            handle = actor.step(prompts)
+
         preference_data: List[PreferenceData] = self.ipc_client.deserialize_ipc(handle)
 
         actor_time = time.time() - st_time
 
-        info = {
+        metric = {
             "actor/generate_time": actor_time,
             "actor/chosen_avg_str_len": np.mean(
                 [len(p.chosen_response) for p in preference_data]
@@ -60,4 +66,6 @@ class PreferenceCollector:
             "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
         }
 
-        return preference_data, info
+        metric.update(preference_data.info)
+
+        return preference_data, metric

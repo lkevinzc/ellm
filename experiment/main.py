@@ -85,6 +85,7 @@ if __name__ == "__main__":
     parser.add_argument("--reg_lambda", type=float, default=10)
 
     # Evaluation params
+    parser.add_argument("--online_evaluation", action="store_true")
     parser.add_argument("--best_of_n_eval", action="store_true")
     parser.add_argument("--num_bon", type=int, default=1)
     parser.add_argument("--bon_temperature", type=float, default=0.3)

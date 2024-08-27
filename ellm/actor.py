@@ -19,6 +19,8 @@ class Actor:
         self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
+        # Measuring the **online** performance
+        self.enable_online_evaluation = args.online_evaluation
 
         self.ipc_client = PlasmaShmClient(ipc_server)
 
@@ -115,7 +117,28 @@ class Actor:
             return responses, win_probs
         return responses, None
 
-    def step(self, prompts: List[str]) -> List[PreferenceData]:
+    def online_eval(self, prompts, references, candidates):
+        win_probs_1 = self.blender.compare(
+            prompts,
+            [candidates[i][0] for i in range(len(prompts))],
+            references,
+            return_logits=True,
+            disable_tqdm=True,
+        )
+        win_probs_1 = torch.from_numpy(win_probs_1).sigmoid().numpy()
+        win_probs_2 = self.blender.compare(
+            prompts,
+            [candidates[i][1] for i in range(len(prompts))],
+            references,
+            return_logits=True,
+            disable_tqdm=True,
+        )
+        win_probs_2 = torch.from_numpy(win_probs_2).sigmoid().numpy()
+        return (win_probs_1 + win_probs_2) / 2
+
+    def step(
+        self, prompts: List[str], references: List[str] = None
+    ) -> List[PreferenceData]:
         """Step the actor.
 
         Given a prompt x, K responses {y_1, ..., y_K} are sample from the behavior LLM pi_beta,
@@ -126,10 +149,11 @@ class Actor:
             prompt: A list of prompt texts.
         """
         assert not self.eval_mode
+        info = dict()
         # step 1. generate
         candidates = self._generate(prompts, self.sampling_params)
 
-        # step 2. optional selection
+        # step 2a. optional selection
         if self.sampling_params.n > 2:
             print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
@@ -137,6 +161,12 @@ class Actor:
                 prompts, candidates, return_features=self.learning_rm
             )
             candidates = results.dueling_candidates
+
+        # step 2b. optional online eval
+        if self.enable_online_evaluation:
+            assert references is not None
+            win_probs = self.online_eval(prompts, references, candidates)
+            info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
         feedback = self.blender.compare(
@@ -163,6 +193,7 @@ class Actor:
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=candidates[i][chosen[i]] == candidates[i][rejected[i]],
+                info=info,
             )
             for i in range(len(prompts))
         ]

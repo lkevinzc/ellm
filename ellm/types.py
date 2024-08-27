@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from typing import Any, Dict
 
 import torch
+
+Metric = Dict[str, Any]
 
 
 @dataclass
@@ -12,3 +15,4 @@ class PreferenceData:
     rejected_feature: torch.Tensor
     init_clash: bool
     same: bool
+    info: Metric = dict()

@@ -103,10 +103,17 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             range(min(args.max_samples, len(prompts_data)))
         )
         prompts_dataset = PromptDataset(
-            prompts_data, tokenizer, strategy, input_template=args.input_template
+            prompts_data,
+            tokenizer,
+            strategy,
+            input_template=args.input_template,
+            get_reference=True,
         )
         prompts_dataloader = strategy.setup_dataloader(
-            prompts_dataset, args.micro_rollout_batch_size, True, True
+            prompts_dataset,
+            args.micro_rollout_batch_size,
+            pin_memory=True,
+            shuffle=False,
         )
         strategy.print("Prompt dataset example:")
         strategy.print("Processed:", prompts_dataset[0][0])
@@ -268,9 +275,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 disable=not self.strategy.is_rank_0(),
             )
 
-            for processed_prompts, raw_prompts in self.prompts_dataloader:
+            for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
                 preference_data, self.actor_info = self.preference_collector(
-                    processed_prompts
+                    processed_prompts, refs
                 )
                 self.query_step += len(preference_data)
                 self.process_preference_data(preference_data, raw_prompts)
