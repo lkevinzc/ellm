@@ -15,4 +15,4 @@ class PreferenceData:
     rejected_feature: torch.Tensor
     init_clash: bool
     same: bool
-    info: Metric = dict()
+    info: Metric
