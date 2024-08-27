@@ -52,7 +52,10 @@ class Actor:
             ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
         else:
             assert sampling_params.n > 2
-            self.explorer = Explorer(getattr(model, args.exp_method)(args))
+            self.explorer = Explorer(
+                getattr(model, args.exp_method)(args),
+                random_sampling=args.exp_rnd_sample,
+            )
             if args.exp_pretrain:
                 print(f"Loading pretrained ENN from {args.exp_pretrain}")
                 self.explorer.reward_model.load_state_dict(
@@ -158,6 +161,8 @@ class Actor:
                     if self.learning_rm
                     else None
                 ),
+                init_clash=results.init_clash[i] if self.learning_rm else False,
+                same=candidates[i][chosen[i]] == candidates[i][rejected[i]],
             )
             for i in range(len(prompts))
         ]

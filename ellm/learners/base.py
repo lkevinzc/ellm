@@ -1,4 +1,5 @@
 import abc
+import dataclasses
 import math
 import os
 import socket
@@ -309,13 +310,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
         for i, pref in enumerate(data_list):
             # Replace with raw prompts instead of templated ones
-            new_pref = PreferenceData(
-                prompt=raw_prompts[i],
-                chosen_response=pref.chosen_response,
-                rejected_response=pref.rejected_response,
-                chosen_feature=None,
-                rejected_feature=None,
-            )
+            new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
 
     def preference_learning(self, learning_round):

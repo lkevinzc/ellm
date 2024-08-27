@@ -1,7 +1,7 @@
 import abc
 import random
 from argparse import Namespace
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import einops
 import torch
@@ -20,14 +20,16 @@ class RewardModel(abc.ABC, nn.Module):
         """Get learning metrics."""
 
     @abc.abstractmethod
-    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
         """Get dueling actions based on rewards of given features.
 
         Args:
             features (torch.Tensor): (M, N, d)
 
         Returns:
-            torch.LongTensor: (M, 2)
+            Tuple[torch.LongTensor]: [(M, 1), (M, 1)]
         """
 
     @abc.abstractmethod
@@ -97,12 +99,14 @@ class LmcFGTS(RewardModel):
             lr=args.rm_lr,
             temperature=args.lmc_temp,
             a=args.lmc_a,
+            asgld=args.lmc_asgld,
         )
         self.optimizer_2 = LAdam(
             self.model_2.parameters(),
             lr=args.rm_lr,
             temperature=args.lmc_temp,
             a=args.lmc_a,
+            asgld=args.lmc_asgld,
         )
 
         self.reg_lambda = args.reg_lambda
@@ -133,9 +137,13 @@ class LmcFGTS(RewardModel):
         return best_actions
 
     @torch.no_grad
-    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
-        return rewards.argmax(dim=2).squeeze().permute(1, 0)
+        best_actions = rewards.argmax(dim=2)
+        first_actions, second_actions = best_actions
+        return first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
@@ -197,7 +205,6 @@ class EnnDTS(RewardModel):
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)
         self.reg_lambda = args.enn_lambda
         self.sgd_steps = args.rm_sgd_steps
-        self.rnd_sample = args.rm_rnd_sample
         self.loss_fn = PairWiseLoss()
         self.train_bs = 32
         self.infer_bs = 32
@@ -225,25 +232,28 @@ class EnnDTS(RewardModel):
         return best_actions
 
     @torch.no_grad
-    def get_duel_actions(self, features: torch.Tensor) -> torch.LongTensor:
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
-        E, _, N, _ = rewards.shape
+        E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement
-        s = list(range(E))
-        random.shuffle(s)
-        first_actions = best_actions[s[0]]
+        s1 = list(range(E // 2))
+        random.shuffle(s1)
+        s2 = list(range(E // 2, E))
+        random.shuffle(s2)
+        first_actions = best_actions[s1[0]]
         second_actions = torch.ones_like(first_actions) * -1
-        for actions in best_actions[s[1:]]:
+        for actions in best_actions[s2]:
             valid_idx = (actions != first_actions) * (second_actions == -1)
             second_actions[valid_idx] = actions[valid_idx]
             if -1 not in second_actions:
                 break
-        rand_actions = (
-            torch.randint_like(second_actions, N) if self.rnd_sample else first_actions
+        second_actions = torch.where(
+            second_actions == -1, first_actions, second_actions
         )
-        second_actions = torch.where(second_actions == -1, rand_actions, second_actions)
-        return torch.cat([first_actions, second_actions], dim=-1)
+        return first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries

@@ -56,9 +56,8 @@ class PreferenceCollector:
             "actor/rejected_avg_str_len": np.mean(
                 [len(p.rejected_response) for p in preference_data]
             ),
-            "actor/same_response_ratio": np.mean(
-                [p.chosen_response == p.rejected_response for p in preference_data]
-            ),
+            "actor/init_clash_ratio": np.mean([p.init_clash for p in preference_data]),
+            "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
         }
 
         return preference_data, info

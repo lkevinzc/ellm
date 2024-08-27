@@ -10,3 +10,5 @@ class PreferenceData:
     rejected_response: str
     chosen_feature: torch.Tensor
     rejected_feature: torch.Tensor
+    init_clash: bool
+    same: bool
