@@ -196,6 +196,10 @@ class Actor:
                     if self.learning_rm
                     else None
                 ),
+                max_rewarding_feature=(
+                    results.max_rewarding_features[i] if self.learning_rm else None
+                ),
+                chosen_idx=chosen[i].item(),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=candidates[i][chosen[i]] == candidates[i][rejected[i]],
                 info=info,

@@ -13,6 +13,7 @@ from ellm.rm.model import RewardModel
 class ExplorationResults:
     dueling_candidates: Dict[int, List[str]]
     candidate_features: torch.Tensor
+    max_rewarding_features: torch.Tensor
     init_clash: List[bool]
 
 
@@ -71,9 +72,9 @@ class Explorer:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         features = self._get_features(prompts, candidates)  # (M, N, d)
-        first_indices, second_indices = self.reward_model.get_duel_actions(
+        rewards, first_indices, second_indices = self.reward_model.get_duel_actions(
             features
-        )  # both (M, 1)
+        )  # rewards: (E or 2, M, N, 1); indices: both (M, 1)
 
         # In the case where both responses are the same, do random sampling
         init_clash = (second_indices == first_indices).cpu().squeeze().tolist()
@@ -90,6 +91,13 @@ class Explorer:
         dueling_candidates = {}
         for i, sel_idx in enumerate(selected_candidate_indices):
             dueling_candidates[i] = [candidates[i][j] for j in sel_idx]
+
+        # Get features from the max rewarding actions for Feel-Good
+        max_indices = rewards.argmax(dim=2)  # (E or 2, M, 1)
+        max_feats = torch.stack(
+            [features[i][max_indices[:, i, 0]] for i in range(len(prompts))]
+        ).cpu()  # (M, E or 2, d)
+
         return ExplorationResults(
             dueling_candidates=dueling_candidates,
             candidate_features=(
@@ -102,6 +110,7 @@ class Explorer:
                 if return_features
                 else None
             ),
+            max_rewarding_features=max_feats if return_features else None,
             init_clash=init_clash,
         )
 

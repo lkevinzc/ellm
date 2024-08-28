@@ -22,14 +22,14 @@ class RewardModel(abc.ABC, nn.Module):
     @abc.abstractmethod
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         """Get dueling actions based on rewards of given features.
 
         Args:
             features (torch.Tensor): (M, N, d)
 
         Returns:
-            Tuple[torch.LongTensor]: [(M, 1), (M, 1)]
+            Tuple[torch.LongTensor]: rewards, first and second indices [(E or 2, M, N, 1), (M, 1), (M, 1)]
         """
 
     @abc.abstractmethod
@@ -48,23 +48,26 @@ class RewardModel(abc.ABC, nn.Module):
         """Learn the reward model based on preference data."""
 
 
-class PairWiseLoss(nn.Module):
-    """
-    Pairwise Loss for Reward Model
-    """
+def pair_wise_loss(
+    chosen_reward: torch.Tensor,
+    reject_reward: torch.Tensor,
+    mask: torch.Tensor,
+    margin: torch.Tensor = None,
+) -> torch.Tensor:
+    """Pairwise Loss for Reward Model."""
+    if margin is not None:
+        loss = -F.logsigmoid(chosen_reward - reject_reward - margin)
+    else:
+        loss = -F.logsigmoid(chosen_reward - reject_reward)
+    return (loss * mask).mean()
 
-    def forward(
-        self,
-        chosen_reward: torch.Tensor,
-        reject_reward: torch.Tensor,
-        mask: torch.Tensor,
-        margin: torch.Tensor = None,
-    ) -> torch.Tensor:
-        if margin is not None:
-            loss = -F.logsigmoid(chosen_reward - reject_reward - margin)
-        else:
-            loss = -F.logsigmoid(chosen_reward - reject_reward)
-        return (loss * mask).mean()
+
+def feel_good_loss(
+    self_max_reward: torch.Tensor,
+    other_reward: torch.Tensor,
+) -> torch.Tensor:
+    """Feel-Good term for Reward Model in dueling bandit."""
+    return -(self_max_reward - other_reward).mean()
 
 
 class LmcFGTS(RewardModel):
@@ -110,7 +113,7 @@ class LmcFGTS(RewardModel):
 
         self.reg_lambda = args.reg_lambda
         self.sgd_steps = args.rm_sgd_steps
-        self.loss_fn = PairWiseLoss()
+        self.loss_fn = pair_wise_loss
         self.train_bs = 32
         self.infer_bs = 32
 
@@ -138,11 +141,11 @@ class LmcFGTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         best_actions = rewards.argmax(dim=2)
         first_actions, second_actions = best_actions
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
@@ -194,6 +197,7 @@ class EnnDTS(RewardModel):
             "train/rm/loss_rew": 0,
             "train/rm/loss_reg": 0,
             "train/rm/lambda": 0,
+            "train/rm/loss_fg": 0,
         }
 
     def __init__(self, args: Namespace) -> None:
@@ -210,10 +214,9 @@ class EnnDTS(RewardModel):
         self.reg_lambda = args.enn_lambda
         self.max_resample = args.enn_max_try
         self.sgd_steps = args.rm_sgd_steps
-        self.loss_fn = PairWiseLoss()
+        self.fg_mu = args.rm_fg_mu
         self.train_bs = 32
         self.infer_bs = 32
-        # self.max_trial = 3
 
     @torch.no_grad
     def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
@@ -239,7 +242,7 @@ class EnnDTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
@@ -258,20 +261,48 @@ class EnnDTS(RewardModel):
         second_actions = torch.where(
             second_actions == -1, first_actions, second_actions
         )
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
+        E = self.model.num_ensemble
+
         for _ in range(self.sgd_steps):
             batch = buffer.sample(self.train_bs)
             pair_feats = batch.pair_features.view(2 * self.train_bs, -1)
-            batch_inp = pair_feats[None, :, :].repeat([self.model.num_ensemble, 1, 1])
-            scores = self.model(batch_inp)
-            scores = scores.view(self.model.num_ensemble, self.train_bs, 2, 1)
+            scores = self.model(pair_feats[None, :, :].repeat([E, 1, 1]))
+            scores = scores.view(E, self.train_bs, 2, 1)
             chosen_scores, rejected_scores = scores[..., 0, :], scores[..., 1, :]
-            loss_rew = self.loss_fn(
+            loss_rew = pair_wise_loss(
                 chosen_scores, rejected_scores, batch.loss_masks[None]
             )
+
+            max_rew_feats = einops.rearrange(
+                batch.max_rewarding_features, "b e d -> e b d"
+            )
+            self_max_reward = self.model(max_rew_feats)  # (E, B, 1)
+            s1_chosen_feats = torch.stack(
+                [
+                    batch.pair_features[i, batch.chosen_idx[i]]
+                    for i in range(self.train_bs)
+                ]
+            )
+            s1_chosen_feats = s1_chosen_feats[None, ...].repeat(
+                [E // 2, 1, 1]
+            )  # (E//2, B, d)
+            s2_chosen_feats = torch.stack(
+                [
+                    batch.pair_features[i, 1 - batch.chosen_idx[i]]
+                    for i in range(self.train_bs)
+                ]
+            )
+            s2_chosen_feats = s2_chosen_feats[None, ...].repeat(
+                [E // 2, 1, 1]
+            )  # (E//2, B, d)
+
+            other_reward = torch.cat([s1_chosen_feats, s2_chosen_feats])
+            loss_fg = self.fg_mu * feel_good_loss(self_max_reward, other_reward)
+
             loss_reg = (
                 self.reg_lambda
                 * self.train_bs
@@ -279,12 +310,13 @@ class EnnDTS(RewardModel):
                 * self.model.regularization()
             )
             self.optimizer.zero_grad()
-            (loss_rew + loss_reg).backward()
+            (loss_rew + loss_reg + loss_fg).backward()
             self.optimizer.step()
 
         return {
             "train/rm/loss_rew": loss_rew.detach(),
             "train/rm/loss_reg": loss_reg.detach(),
+            "train/rm/loss_fg": loss_fg.detach(),
             "train/rm/lambda": self.reg_lambda * self.train_bs / total_num_queries,
         }
 
