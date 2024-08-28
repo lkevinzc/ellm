@@ -118,22 +118,22 @@ class Actor:
         return responses, None
 
     def online_eval(self, prompts, references, candidates):
-        win_probs_1 = self.blender.compare(
+        win_logits_1 = self.blender.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             references,
             return_logits=True,
             disable_tqdm=True,
         )
-        win_probs_1 = torch.from_numpy(win_probs_1).sigmoid().numpy()
-        win_probs_2 = self.blender.compare(
+        win_probs_1 = torch.from_numpy(win_logits_1).sigmoid().numpy()
+        win_logits_2 = self.blender.compare(
             prompts,
             [candidates[i][1] for i in range(len(prompts))],
             references,
             return_logits=True,
             disable_tqdm=True,
         )
-        win_probs_2 = torch.from_numpy(win_probs_2).sigmoid().numpy()
+        win_probs_2 = torch.from_numpy(win_logits_2).sigmoid().numpy()
         return (win_probs_1 + win_probs_2) / 2
 
     def step(
@@ -169,12 +169,17 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
-        feedback = self.blender.compare(
+        logits = self.blender.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
+            return_logits=True,
         )
-        chosen = 1 - feedback
+        bt_probs = torch.from_numpy(logits).sigmoid()
+        single_sided_probs = torch.where(bt_probs < 0.5, 1 - bt_probs, bt_probs)
+        info["actor/single_sided_oracle_probs"] = single_sided_probs.mean().item()
+        binary_feedback = logits > 0
+        chosen = 1 - binary_feedback
         rejected = 1 - chosen
         preference_data = [
             PreferenceData(
