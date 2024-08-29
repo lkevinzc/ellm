@@ -139,9 +139,8 @@ class WorkerWrap(Worker):
         self.model_runner.model.load_weights(weights=[(name, weight)])
 
         del weight
-        # TODO: should we empty cache if all weights have updated?
-        # if empty_cache:
-        #     torch.cuda.empty_cache()
+        if empty_cache:
+            torch.cuda.empty_cache()
 
 
 def node_ip_address_from_perspective(address: str = "8.8.8.8:53"):
