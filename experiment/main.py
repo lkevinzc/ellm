@@ -28,6 +28,28 @@ if __name__ == "__main__":
     parser.add_argument("--pretrain", type=str, default="google/gemma-2b")
     parser.add_argument("--ref_pretrain", type=str, default=None)
 
+    # Resource config
+    parser.add_argument(
+        "--vllm_gpu_ratio",
+        type=float,
+        default=0.3,
+    )
+    parser.add_argument(
+        "--num_actors",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--num_learner_nodes",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--shm_size_mb",
+        type=int,
+        default=5000,
+    )
+
     # Prompts dataset
     parser.add_argument(
         "--prompt_data", type=str, default="OpenLLMAI/prompt-collection-v0.1"
@@ -101,7 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_path", type=str, default="./output")
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)
-    parser.add_argument("--eval_steps", type=int, default=-1)
+    parser.add_argument("--eval_steps", type=int, default=80)
     parser.add_argument("--ckpt_path", type=str, default="./ckpt/checkpoints_dpo")
     parser.add_argument("--max_ckpt_num", type=int, default=3)
     parser.add_argument("--max_ckpt_mem", type=int, default=1000)  # 1000GB
@@ -109,10 +131,10 @@ if __name__ == "__main__":
     parser.add_argument("--num_episodes", type=int, default=1)
     parser.add_argument("--micro_train_batch_size", type=int, default=1)
     parser.add_argument("--train_batch_size", type=int, default=32)
-    parser.add_argument("--rollout_batch_size", type=int, default=512)
-    parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
+    parser.add_argument("--rollout_batch_size", type=int, default=32)
+    parser.add_argument("--micro_rollout_batch_size", type=int, default=16)
     parser.add_argument("--max_epochs", type=int, default=1)
-    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=999999999)
+    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=16)
     parser.add_argument("--r_buffer_maxlen", type=int, default=3200)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
 
@@ -137,7 +159,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--local_rank", type=int, default=-1, help="local_rank for deepspeed"
     )
-    parser.add_argument("--zero_stage", type=int, default=3)
+    parser.add_argument("--zero_stage", type=int, default=2)
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--ref_offload", action="store_true", default=False)
     parser.add_argument("--learning_rate", type=float, default=5e-7)

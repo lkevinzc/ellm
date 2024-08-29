@@ -17,7 +17,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
 
     # IPC.
     ipc_server = program.add_node(
-        lp.CourierNode(PlasmaShmServer, size_mb=1000), label="ipc_server"
+        lp.CourierNode(PlasmaShmServer, size_mb=args.shm_size_mb), label="ipc_server"
     )
 
     # Actor.
@@ -25,7 +25,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         "model": args.pretrain,
         "trust_remote_code": True,
         "tensor_parallel_size": 1,
-        "gpu_memory_utilization": 0.5,
+        "gpu_memory_utilization": args.vllm_gpu_ratio,
         "dtype": "bfloat16",
     }
     sampling_params = vllm.SamplingParams(
@@ -38,7 +38,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
 
     actors = []
     local_resources = {}
-    for i in range(4):
+    for i in range(args.num_actors):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
@@ -49,7 +49,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         local_resources[label] = local_multi_processing.PythonProcess(
             env=dict(CUDA_VISIBLE_DEVICES=str(i))
         )
-    _gpu_offset = 4
+    _gpu_offset = args.num_actors
 
     # Learner.
     master_addr = "0.0.0.0"
@@ -57,17 +57,26 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     args.local_rank = 0
     label = "learner_0"
     master_learner = lp.PyClassNode(
-        learner_cls, 4, 0, 0, master_addr, master_port, True, args, actors, ipc_server
+        learner_cls,
+        args.num_learner_nodes,
+        0,
+        0,
+        master_addr,
+        master_port,
+        True,
+        args,
+        actors,
+        ipc_server,
     )
     program.add_node(master_learner, label=label)
     local_resources[label] = local_multi_processing.PythonProcess(
         env=dict(CUDA_VISIBLE_DEVICES=str(_gpu_offset))
     )
-    for i in range(1, 4):
+    for i in range(1, args.num_learner_nodes):
         label = f"learner_{i}"
         worker_learner = lp.PyClassNode(
             learner_cls,
-            4,
+            args.num_learner_nodes,
             i,
             i,
             master_addr,
