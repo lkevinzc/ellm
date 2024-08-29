@@ -35,14 +35,10 @@ if __name__ == "__main__":
         default=0.3,
     )
     parser.add_argument(
-        "--num_actors",
+        "--total_gpus",
         type=int,
-        default=2,
-    )
-    parser.add_argument(
-        "--num_learner_nodes",
-        type=int,
-        default=2,
+        choices=[4, 5, 8],
+        default=5,
     )
     parser.add_argument(
         "--shm_size_mb",
@@ -91,6 +87,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--exp_pretrain", type=str, default="")
     parser.add_argument("--exp_rnd_sample", action="store_true")
+    parser.add_argument("--exp_allow_second_best", action="store_true")
 
     parser.add_argument("--rm_lr", type=float, default=1e-3)
     parser.add_argument("--rm_hidden_dim", type=int, default=128)
@@ -132,9 +129,9 @@ if __name__ == "__main__":
     parser.add_argument("--micro_train_batch_size", type=int, default=1)
     parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--rollout_batch_size", type=int, default=32)
-    parser.add_argument("--micro_rollout_batch_size", type=int, default=16)
+    parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
-    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=16)
+    parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
     parser.add_argument("--r_buffer_maxlen", type=int, default=3200)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
 

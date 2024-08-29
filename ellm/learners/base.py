@@ -255,6 +255,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
         self.strategy.print(f"Update interval = {update_interval}")
         steps = 1
+        self.start_time = time.time()
 
         self.actor_info = {}
 
@@ -394,6 +395,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "global_step": self.global_step,
             "policy_sgd_step": self.policy_sgd_step,
             "pi_buffer_len": len(self.pi_buffer),
+            "elapse": time.time() - self.start_time,
         }
 
     def save_logs_and_checkpoints(self, args, batch_steps, train_info):
