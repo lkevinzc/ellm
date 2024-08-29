@@ -189,14 +189,13 @@ class Actor:
 
         if self.learning_rm:
             # Measure the internal RM accuracy
-            rm_acc = np.mean(
-                [
-                    binary_feedback[i]
-                    and results.init_clash[i]
-                    and not same_response[i]
-                    for i in range(len(prompts))
-                ]
-            )
+            support = [
+                results.init_clash[i] and not same_response[i]
+                for i in range(len(prompts))
+            ]
+            rm_acc = np.sum(
+                [binary_feedback[i] and support[i] for i in range(len(prompts))]
+            ) / (np.sum(support) + 1e-8)
             info["eval/rm_acc"] = rm_acc
 
         preference_data = [
