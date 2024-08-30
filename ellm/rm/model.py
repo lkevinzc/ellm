@@ -15,6 +15,9 @@ from ellm.utils.buffer import UniformBuffer
 
 class RewardModel(abc.ABC, nn.Module):
 
+    train_bs = 32
+    infer_bs = 32
+
     @abc.abstractclassmethod
     def get_metrics(cls):
         """Get learning metrics."""
@@ -111,8 +114,6 @@ class LmcFGTS(RewardModel):
         self.reg_lambda = args.reg_lambda
         self.sgd_steps = args.rm_sgd_steps
         self.loss_fn = PairWiseLoss()
-        self.train_bs = 32
-        self.infer_bs = 32
 
     @torch.no_grad
     def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
@@ -212,9 +213,6 @@ class EnnDTS(RewardModel):
         self.allow_second_best = args.exp_allow_second_best
         self.sgd_steps = args.rm_sgd_steps
         self.loss_fn = PairWiseLoss()
-        self.train_bs = 32
-        self.infer_bs = 32
-        # self.max_trial = 3
 
     @torch.no_grad
     def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
@@ -257,7 +255,7 @@ class EnnDTS(RewardModel):
             if -1 not in second_actions:
                 break
         if self.allow_second_best:
-            second_best_actions = rewards.argsort(dim=2)[..., -1, :]
+            second_best_actions = rewards.argsort(dim=2)[..., -2, :]
             for actions in second_best_actions[s2[: self.max_resample]]:
                 valid_idx = (actions != first_actions) * (second_actions == -1)
                 second_actions[valid_idx] = actions[valid_idx]

@@ -32,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--vllm_gpu_ratio",
         type=float,
-        default=0.3,
+        default=0.25,
     )
     parser.add_argument(
         "--total_gpus",
@@ -92,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--rm_lr", type=float, default=1e-3)
     parser.add_argument("--rm_hidden_dim", type=int, default=128)
     parser.add_argument("--rm_sgd_steps", type=int, default=1)
+    parser.add_argument("--rm_fixed_reg", action="store_true")
 
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)

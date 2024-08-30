@@ -17,6 +17,7 @@ class DAPwRMLearner(DAPLearner):
         super()._init(args, actors)
         self.rm = None
         self.learn_rm_only = args.learn_rm_only
+        self.fixed_reg = args.rm_fixed_reg
 
         assert args.exp_method != "no" and args.exp_pretrain == ""
         rm_cls = getattr(model, args.exp_method)
@@ -89,9 +90,10 @@ class DAPwRMLearner(DAPLearner):
             super().sync_params_to_actors()
 
     def _reward_learning(self):
-        # Aggregate data from workers.
         total_num_queries = self.strategy.all_reduce(self.query_step, "sum")
         if self.rm:
+            if self.fixed_reg:
+                total_num_queries = self.rm.train_bs
             self.r_buffer.total_num_queries = total_num_queries
             train_rm_info = self.rm.learn(self.r_buffer)
             assert self.train_rm_info.keys() == train_rm_info.keys()

@@ -114,7 +114,7 @@ class ScriptArguments:
         metadata={"help": "The directory containing evaluation responses."}
     )
     ref_data_path: str = field(
-        metadata={"help": "The directory containing reference responses."}
+        default="", metadata={"help": "The directory containing reference responses."}
     )
     judge_model: str = field(
         default="meta-llama/Meta-Llama-3-70B-Instruct",
