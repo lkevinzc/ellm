@@ -2,6 +2,7 @@ import time
 from typing import List
 
 import llm_blender
+import numpy as np
 import torch
 import vllm
 
@@ -118,22 +119,22 @@ class Actor:
         return responses, None
 
     def online_eval(self, prompts, references, candidates):
-        win_probs_1 = self.blender.compare(
+        win_logits_1 = self.blender.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             references,
             return_logits=True,
             disable_tqdm=True,
         )
-        win_probs_1 = torch.from_numpy(win_probs_1).sigmoid().numpy()
-        win_probs_2 = self.blender.compare(
+        win_probs_1 = torch.from_numpy(win_logits_1).sigmoid().numpy()
+        win_logits_2 = self.blender.compare(
             prompts,
             [candidates[i][1] for i in range(len(prompts))],
             references,
             return_logits=True,
             disable_tqdm=True,
         )
-        win_probs_2 = torch.from_numpy(win_probs_2).sigmoid().numpy()
+        win_probs_2 = torch.from_numpy(win_logits_2).sigmoid().numpy()
         return (win_probs_1 + win_probs_2) / 2
 
     def step(
@@ -169,13 +170,34 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
-        feedback = self.blender.compare(
+        logits = self.blender.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
         )
-        chosen = 1 - feedback
+        bt_probs = torch.from_numpy(logits).sigmoid()
+        info["actor/first_action_win_prob"] = bt_probs.mean().item()
+
+        binary_feedback = logits > 0
+        chosen = 1 - binary_feedback
         rejected = 1 - chosen
+
+        same_response = [
+            candidates[i][chosen[i]] == candidates[i][rejected[i]]
+            for i in range(len(prompts))
+        ]
+
+        if self.learning_rm:
+            # Measure the internal RM accuracy
+            support = [
+                results.init_clash[i] and not same_response[i]
+                for i in range(len(prompts))
+            ]
+            rm_acc = np.sum(
+                [binary_feedback[i] and support[i] for i in range(len(prompts))]
+            ) / (np.sum(support) + 1e-8)
+            info["eval/rm_acc"] = rm_acc
+
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],
@@ -192,7 +214,7 @@ class Actor:
                     else None
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
-                same=candidates[i][chosen[i]] == candidates[i][rejected[i]],
+                same=same_response[i],
                 info=info,
             )
             for i in range(len(prompts))

@@ -15,6 +15,17 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     """Define the default distributed program topology with configs."""
     program = lp.Program("online_dap")
 
+    # Resource.
+    if args.total_gpus == 4:
+        actor_gpus = [0, 1]
+        learner_gpus = [2, 3]
+    elif args.total_gpus == 5:
+        actor_gpus = [0, 1, 2, 3]
+        learner_gpus = [4, 3, 2, 1]
+    elif args.total_gpus == 8:
+        actor_gpus = [0, 1, 2, 3]
+        learner_gpus = [4, 5, 6, 7]
+
     # IPC.
     ipc_server = program.add_node(
         lp.CourierNode(PlasmaShmServer, size_mb=args.shm_size_mb), label="ipc_server"
@@ -38,7 +49,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
 
     actors = []
     local_resources = {}
-    for i in range(args.num_actors):
+    for i in actor_gpus:
         label = f"actor_{i}"
         actors.append(
             program.add_node(
@@ -49,7 +60,6 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         local_resources[label] = local_multi_processing.PythonProcess(
             env=dict(CUDA_VISIBLE_DEVICES=str(i))
         )
-    _gpu_offset = args.num_actors
 
     # Learner.
     master_addr = "0.0.0.0"
@@ -58,7 +68,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     label = "learner_0"
     master_learner = lp.PyClassNode(
         learner_cls,
-        args.num_learner_nodes,
+        len(learner_gpus),
         0,
         0,
         master_addr,
@@ -70,13 +80,13 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
     )
     program.add_node(master_learner, label=label)
     local_resources[label] = local_multi_processing.PythonProcess(
-        env=dict(CUDA_VISIBLE_DEVICES=str(_gpu_offset))
+        env=dict(CUDA_VISIBLE_DEVICES=str(learner_gpus[0]))
     )
-    for i in range(1, args.num_learner_nodes):
+    for i in range(1, len(learner_gpus)):
         label = f"learner_{i}"
         worker_learner = lp.PyClassNode(
             learner_cls,
-            args.num_learner_nodes,
+            len(learner_gpus),
             i,
             i,
             master_addr,
@@ -88,7 +98,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         )
         program.add_node(worker_learner, label=label)
         local_resources[label] = local_multi_processing.PythonProcess(
-            env=dict(CUDA_VISIBLE_DEVICES=str(i + _gpu_offset))
+            env=dict(CUDA_VISIBLE_DEVICES=str(learner_gpus[i]))
         )
 
     return program, local_resources
