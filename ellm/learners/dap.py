@@ -1,8 +1,16 @@
+from enum import Enum
+
 import torch
 
 from ellm.learners.base import LearnerBase
 from ellm.learners.loss import DPOLoss, SimPOLoss
 from ellm.utils.data import pad_to_length
+
+
+class DAPAlgo(Enum):
+    DPO = 0
+    IPO = 1
+    SimPO = 2
 
 
 class DAPLearner(LearnerBase):
@@ -14,11 +22,14 @@ class DAPLearner(LearnerBase):
         if self.ref_model is not None:
             if args.ipo:
                 self.strategy.print("Training IPO")
+                self.algo = DAPAlgo.IPO
             else:
                 self.strategy.print("Training DPO")
+                self.algo = DAPAlgo.DPO
             self.loss = DPOLoss(args.beta, args.label_smoothing, args.ipo)
         else:
             self.strategy.print("Training SimPO")
+            self.algo = DAPAlgo.SimPO
             self.loss = SimPOLoss(
                 args.beta, args.gamma_beta_ratio, args.label_smoothing
             )
@@ -89,7 +100,7 @@ class DAPLearner(LearnerBase):
             input_ids,
             att_masks,
             prompt_id_lens,
-            average_log_prob=True,  # SimPO
+            average_log_prob=self.algo in [DAPAlgo.SimPO, DAPAlgo.IPO],
         )
         chosen_logps = all_logps[: chosen_ids.shape[0]]
         rejected_logps = all_logps[chosen_ids.shape[0] :]
