@@ -20,3 +20,4 @@ wandb
 wheel
 ml_collections
 pyarrow>=0.6.1,<12
+python-Levenshtein==0.25.1

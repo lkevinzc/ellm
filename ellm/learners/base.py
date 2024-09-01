@@ -71,6 +71,19 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             ds_config=strategy.get_ds_train_config(is_wrapped=True),
         )
 
+        if args.ref_pretrain:
+            strategy.print("Running reference-based algorithm... (DPO, IPO, etc.)")
+            ref_model = LLM(
+                args.ref_pretrain,
+                use_flash_attention_2=args.flash_attn,
+                bf16=args.bf16,
+                load_in_4bit=args.load_in_4bit,
+                ds_config=strategy.get_ds_eval_config(offload=args.ref_offload),
+            )
+        else:
+            strategy.print("Running reference-free algorithm... (SimPO)")
+            ref_model = None
+
         tokenizer = get_tokenizer(
             args.pretrain,
             model.model,
@@ -154,10 +167,20 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare models/optimizers...
-        (self.model, self.optimizer, self.scheduler) = strategy.prepare(
-            (model, optimizer, scheduler),
-            is_rlhf=True,
-        )
+        if ref_model is None:
+            (self.model, self.optimizer, self.scheduler) = strategy.prepare(
+                (model, optimizer, scheduler),
+                is_rlhf=True,
+            )
+            self.ref_model = None
+        else:
+            ((self.model, self.optimizer, self.scheduler), self.ref_model) = (
+                strategy.prepare(
+                    (model, optimizer, scheduler),
+                    ref_model,
+                    is_rlhf=True,
+                )
+            )
 
         # load checkpoint
         if args.load_checkpoint:
