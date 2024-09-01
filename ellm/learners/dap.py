@@ -1,7 +1,7 @@
 import torch
 
 from ellm.learners.base import LearnerBase
-from ellm.learners.loss import SimPOLoss
+from ellm.learners.loss import DPOLoss, SimPOLoss
 from ellm.utils.data import pad_to_length
 
 
@@ -11,7 +11,17 @@ class DAPLearner(LearnerBase):
     def _init(self, args, actors) -> None:
         super()._init(args, actors)
 
-        self.loss = SimPOLoss(args.beta, args.gamma_beta_ratio, args.label_smoothing)
+        if self.ref_model is not None:
+            if args.ipo:
+                self.strategy.print("Training IPO")
+            else:
+                self.strategy.print("Training DPO")
+            self.loss = DPOLoss(args.beta, args.label_smoothing, args.ipo)
+        else:
+            self.strategy.print("Training SimPO")
+            self.loss = SimPOLoss(
+                args.beta, args.gamma_beta_ratio, args.label_smoothing
+            )
 
     def learning_step(self, data):
         device = torch.cuda.current_device()
@@ -27,10 +37,29 @@ class DAPLearner(LearnerBase):
         chosen_logps, rejected_logps, _ = self.concatenated_forward(
             self.model, chosen_ids, c_mask, rejected_ids, r_mask, prompt_id_lens
         )
-
-        preference_loss, chosen_reward, rejected_reward = self.loss(
-            chosen_logps, rejected_logps, loss_masks
-        )
+        if self.ref_model is not None:
+            with torch.no_grad():
+                reference_chosen_logps, reference_rejected_logps, _ = (
+                    self.concatenated_forward(
+                        self.ref_model,
+                        chosen_ids,
+                        c_mask,
+                        rejected_ids,
+                        r_mask,
+                        prompt_id_lens,
+                    )
+                )
+            preference_loss, chosen_reward, rejected_reward = self.loss(
+                chosen_logps,
+                rejected_logps,
+                reference_chosen_logps,
+                reference_rejected_logps,
+                loss_masks,
+            )
+        else:
+            preference_loss, chosen_reward, rejected_reward = self.loss(
+                chosen_logps, rejected_logps, loss_masks
+            )
 
         loss = preference_loss
         self.strategy.backward(loss, self.model, self.optimizer)

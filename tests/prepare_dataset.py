@@ -22,7 +22,7 @@ def main(
     for split in ["test", "validation", "train"]:
         outputs = llm.generate(data[split]["prompt"], sampling_params)
         model_completions = [output.outputs[0].text.strip() for output in outputs]
-        data[split].add_column("pythia-1b-reference", model_completions)
+        data[split] = data[split].add_column("pythia-1b-reference", model_completions)
 
     data.push_to_hub(push_to, token=write_token, commit_message=commit_msg)
 
