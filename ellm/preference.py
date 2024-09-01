@@ -1,6 +1,7 @@
 import time
 from typing import List, Tuple, Union
 
+import Levenshtein
 import numpy as np
 import torch
 import tree
@@ -65,6 +66,12 @@ class PreferenceCollector:
             ),
             "actor/init_clash_ratio": np.mean([p.init_clash for p in preference_data]),
             "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
+            "actor/pair_edit_dist": np.mean(
+                [
+                    Levenshtein.distance(p.chosen_response, p.rejected_response)
+                    for p in preference_data
+                ]
+            ),
         }
 
         mean_info = tree.map_structure(
