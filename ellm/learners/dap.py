@@ -1,16 +1,9 @@
-from enum import Enum
-
 import torch
 
 from ellm.learners.base import LearnerBase
 from ellm.learners.loss import DPOLoss, SimPOLoss
+from ellm.types import DAPAlgo
 from ellm.utils.data import pad_to_length
-
-
-class DAPAlgo(Enum):
-    DPO = 0
-    IPO = 1
-    SimPO = 2
 
 
 class DAPLearner(LearnerBase):
@@ -19,20 +12,16 @@ class DAPLearner(LearnerBase):
     def _init(self, args, actors) -> None:
         super()._init(args, actors)
 
-        if self.ref_model is not None:
-            if args.ipo:
-                self.strategy.print("Training IPO")
-                self.algo = DAPAlgo.IPO
-            else:
-                self.strategy.print("Training DPO")
-                self.algo = DAPAlgo.DPO
-            self.loss = DPOLoss(args.beta, args.label_smoothing, args.ipo)
-        else:
-            self.strategy.print("Training SimPO")
-            self.algo = DAPAlgo.SimPO
+        if self.algo in [DAPAlgo.DPO, DAPAlgo.IPO]:
+            self.loss = DPOLoss(
+                args.beta, args.label_smoothing, ipo=self.algo == DAPAlgo.IPO
+            )
+        elif self.algo == DAPAlgo.SimPO:
             self.loss = SimPOLoss(
                 args.beta, args.gamma_beta_ratio, args.label_smoothing
             )
+        else:
+            raise ValueError("Invalid DAP Algorithm")
 
     def learning_step(self, data):
         device = torch.cuda.current_device()

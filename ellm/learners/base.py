@@ -23,7 +23,7 @@ from transformers.trainer import get_scheduler
 from ellm.actor import Actor
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
-from ellm.types import PreferenceData
+from ellm.types import DAPAlgo, PreferenceData
 from ellm.utils.data import (PreferenceDataset, PromptDataset,
                              blending_datasets, get_tokenizer)
 from ellm.utils.distributed import (init_process_group,
@@ -70,9 +70,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             target_modules=args.target_modules,
             ds_config=strategy.get_ds_train_config(is_wrapped=True),
         )
+        self.algo = args.dap_algo
 
-        if args.ref_pretrain:
+        if self.algo != DAPAlgo.SimPO:
             strategy.print("Running reference-based algorithm... (DPO, IPO, etc.)")
+            assert args.ref_pretrain, "Reference model must be non-empty"
             ref_model = LLM(
                 args.ref_pretrain,
                 use_flash_attention_2=args.flash_attn,
@@ -82,7 +84,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
         else:
             strategy.print("Running reference-free algorithm... (SimPO)")
-            ref_model = None
 
         tokenizer = get_tokenizer(
             args.pretrain,
@@ -167,13 +168,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare models/optimizers...
-        if ref_model is None:
-            (self.model, self.optimizer, self.scheduler) = strategy.prepare(
-                (model, optimizer, scheduler),
-                is_rlhf=True,
-            )
-            self.ref_model = None
-        else:
+        if self.algo != DAPAlgo.SimPO:
             ((self.model, self.optimizer, self.scheduler), self.ref_model) = (
                 strategy.prepare(
                     (model, optimizer, scheduler),
@@ -181,6 +176,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                     is_rlhf=True,
                 )
             )
+        else:
+            (self.model, self.optimizer, self.scheduler) = strategy.prepare(
+                (model, optimizer, scheduler),
+                is_rlhf=True,
+            )
+            self.ref_model = None
 
         # load checkpoint
         if args.load_checkpoint:

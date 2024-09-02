@@ -14,7 +14,7 @@ from ellm.utils.ipc import PlasmaShmClient
 
 
 class Actor:
-    """Actor handles the interaction between the exploration policy and the environment."""
+    """Actor handles the interaction between the LLM policy and the environment."""
 
     def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         self.args = args
@@ -82,7 +82,9 @@ class Actor:
         )  # TODO hard-code first for tl;dr
 
     def _generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
-        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
+        outputs = self.llm.generate(
+            prompts, sampling_params=sampling_params, use_tqdm=False
+        )
         candidates = {}
         for i in range(len(outputs)):
             # for each prompt
@@ -112,7 +114,7 @@ class Actor:
 
         if references:
             win_logits = self.blender.compare(
-                prompts, responses, references, return_logits=True
+                prompts, responses, references, return_logits=True, disable_tqdm=True
             )
             win_probs = torch.from_numpy(win_logits).sigmoid().numpy()
             return responses, win_probs
@@ -174,6 +176,7 @@ class Actor:
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
+            disable_tqdm=True,
         )
         bt_probs = torch.from_numpy(logits).sigmoid()
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
