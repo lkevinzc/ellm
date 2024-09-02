@@ -201,6 +201,7 @@ class Actor:
             ) / (np.sum(support) + 1e-8)
             info["eval/rm_acc"] = rm_acc
 
+        info.update(results.info)
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],

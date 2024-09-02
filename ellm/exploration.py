@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from typing import Dict, List
 
+import numpy as np
 import torch
 import tree
 from transformers import AutoTokenizer
 
 from ellm.rm.backbone import DebertaV2PairRM
 from ellm.rm.model import RewardModel
+from ellm.types import Metric
 
 
 @dataclass
@@ -14,6 +16,7 @@ class ExplorationResults:
     dueling_candidates: Dict[int, List[str]]
     candidate_features: torch.Tensor
     init_clash: List[bool]
+    info: Metric
 
 
 class Explorer:
@@ -71,12 +74,30 @@ class Explorer:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         features = self._get_features(prompts, candidates)  # (M, N, d)
-        first_indices, second_indices = self.reward_model.get_duel_actions(
+        rewards, first_indices, second_indices = self.reward_model.get_duel_actions(
             features
-        )  # both (M, 1)
+        )  # rewards: (E or 2, M, N, 1); indices: both (M, 1)
 
+        init_clash = (second_indices == first_indices).cpu().squeeze()
+        rewards_with_agreed_best = rewards[:, init_clash]
+        clashed_best_indices = second_indices[init_clash]
+        agreed_best_resp_std = np.mean(
+            [
+                torch.std(rewards_with_agreed_best[:, i, clashed_best_indices[i]]).cpu()
+                for i in range(len(clashed_best_indices))
+            ]
+        )
+        rewards_without_agreed_best = rewards[:, ~init_clash]
+        not_clashed_best_indices = second_indices[~init_clash]
+        not_agreed_best_resp_std = np.mean(
+            [
+                torch.std(
+                    rewards_without_agreed_best[:, i, not_clashed_best_indices[i]]
+                ).cpu()
+                for i in range(len(not_clashed_best_indices))
+            ]
+        )
         # In the case where both responses are the same, do random sampling
-        init_clash = (second_indices == first_indices).cpu().squeeze().tolist()
         if self.random_sampling:
             N = features.shape[1]
             rand_indices = torch.randint_like(second_indices, N)
@@ -103,6 +124,12 @@ class Explorer:
                 else None
             ),
             init_clash=init_clash,
+            info={
+                "explorer/agreed_best_resp_std": np.nan_to_num(agreed_best_resp_std),
+                "explorer/not_agreed_best_resp_std": np.nan_to_num(
+                    not_agreed_best_resp_std
+                ),
+            },
         )
 
     def _get_features(

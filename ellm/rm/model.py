@@ -25,14 +25,14 @@ class RewardModel(abc.ABC, nn.Module):
     @abc.abstractmethod
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         """Get dueling actions based on rewards of given features.
 
         Args:
             features (torch.Tensor): (M, N, d)
 
         Returns:
-            Tuple[torch.LongTensor]: [(M, 1), (M, 1)]
+            Tuple[torch.LongTensor]: rewards, first and second indices [(E or 2, M, N, 1), (M, 1), (M, 1)]
         """
 
     @abc.abstractmethod
@@ -139,11 +139,11 @@ class LmcFGTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         best_actions = rewards.argmax(dim=2)
         first_actions, second_actions = best_actions
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
@@ -238,7 +238,7 @@ class EnnDTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
@@ -264,7 +264,7 @@ class EnnDTS(RewardModel):
         second_actions = torch.where(
             second_actions == -1, first_actions, second_actions
         )
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
