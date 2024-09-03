@@ -92,7 +92,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "EnnDTS", "LmcFGTS"],
+        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "LmcFGTS"],
         default="no",
         help="Types of exploration.",
     )
