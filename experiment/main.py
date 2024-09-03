@@ -86,6 +86,7 @@ if __name__ == "__main__":
     # Exploration
     parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument("--learn_rm_only", action="store_true")
+    parser.add_argument("--model_rollout", action="store_true")
 
     parser.add_argument(
         "--exp_method",

@@ -57,7 +57,7 @@ class Actor:
             assert sampling_params.n > 2
             self.explorer = Explorer(
                 getattr(model, args.exp_method)(args),
-                random_sampling=args.exp_rnd_sample,
+                args=args,
             )
             if args.exp_pretrain:
                 print(f"Loading pretrained ENN from {args.exp_pretrain}")
@@ -66,6 +66,7 @@ class Actor:
                 )
             else:
                 self.learning_rm = True  # Learn RM online.
+        self.model_rollout = args.model_rollout
 
         # ###################################
         # ####  Best-of-N for Evaluation ####
@@ -153,6 +154,8 @@ class Actor:
         """
         assert not self.eval_mode
         info = dict()
+        is_model_data = [False] * len(prompts)
+
         # step 1. generate
         candidates = self._generate(prompts, self.sampling_params)
 
@@ -164,6 +167,10 @@ class Actor:
                 prompts, candidates, return_features=self.learning_rm
             )
             candidates = results.dueling_candidates
+
+            if self.model_rollout:
+                # Use random sampling from explorer first; refactor later
+                maybe_model_data = results.init_clash
 
         # step 2b. optional online eval
         if self.enable_online_evaluation:
@@ -183,6 +190,19 @@ class Actor:
 
         binary_feedback = logits > 0
         chosen = 1 - binary_feedback
+        if self.model_rollout:
+            # Record metric and overwrite label.
+            model_rollout_correct = chosen[maybe_model_data] == 0
+            model_rollout_acc = np.sum(model_rollout_correct) / (
+                np.sum(maybe_model_data) + 1e-8
+            )
+            info["eval/model_rollout_acc"] = model_rollout_acc
+
+            if model_rollout_acc > 0.9:
+                # privileged information
+                is_model_data = maybe_model_data
+                chosen[is_model_data] = 0
+
         rejected = 1 - chosen
 
         same_response = [
@@ -219,6 +239,7 @@ class Actor:
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=same_response[i],
+                is_model_data=is_model_data[i],
                 info=info,
             )
             for i in range(len(prompts))
@@ -254,7 +275,6 @@ class Actor:
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
         params_dict = dict(self.explorer.reward_model.named_parameters())
         model.default_weight_loader(params_dict[name], weight)
-        print(f"update reward model weight {name}")
         del weight
 
     def notify_eval_start(self):

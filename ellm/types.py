@@ -22,6 +22,7 @@ class PreferenceData:
     rejected_feature: torch.Tensor
     init_clash: bool
     same: bool
+    is_model_data: bool
     info: Metric
 
 

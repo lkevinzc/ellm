@@ -1,3 +1,4 @@
+from argparse import Namespace
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -20,7 +21,7 @@ class ExplorationResults:
 
 
 class Explorer:
-    def __init__(self, reward_model: RewardModel, random_sampling: bool) -> None:
+    def __init__(self, reward_model: RewardModel, args: Namespace) -> None:
         self.backbone = DebertaV2PairRM.from_pretrained(
             "llm-blender/PairRM-hf", device_map="cuda:0"
         ).eval()
@@ -32,7 +33,7 @@ class Explorer:
         self.backbone_bs = 8
 
         self.reward_model = reward_model.cuda()
-        self.random_sampling = random_sampling
+        self.random_sampling = args.exp_rnd_sample
 
     def best_of_n(
         self,
@@ -100,9 +101,17 @@ class Explorer:
         # In the case where both responses are the same, do random sampling
         if self.random_sampling:
             N = features.shape[1]
-            rand_indices = torch.randint_like(second_indices, N)
+            rnd_second_indices = torch.ones_like(second_indices) * -1
+            for _ in range(3):
+                # Clash prob 1 / N^3
+                rand_indices = torch.randint_like(second_indices, N)
+                valid_idx = (rand_indices != first_indices) * (rnd_second_indices == -1)
+                rnd_second_indices[valid_idx] = rand_indices[valid_idx]
+                if -1 not in rnd_second_indices:
+                    break
+
             second_indices = torch.where(
-                second_indices == first_indices, rand_indices, second_indices
+                second_indices == first_indices, rnd_second_indices, second_indices
             )
 
         selected_candidate_indices = torch.cat(
@@ -123,7 +132,7 @@ class Explorer:
                 if return_features
                 else None
             ),
-            init_clash=init_clash,
+            init_clash=init_clash.tolist(),
             info={
                 "explorer/agreed_best_resp_std": np.nan_to_num(agreed_best_resp_std),
                 "explorer/not_agreed_best_resp_std": np.nan_to_num(

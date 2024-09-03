@@ -226,6 +226,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.pi_beta_version = 0
         self.policy_sgd_step = 0
         self.query_step = 0
+        self.prompt_consumed = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -304,7 +305,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts, refs
                 )
-                self.query_step += len(preference_data)
+                self.prompt_consumed += len(preference_data)
+                self.query_step += np.sum(
+                    [not p.is_model_data for p in preference_data]
+                )
                 self.process_preference_data(preference_data, raw_prompts)
 
                 if steps % update_interval == 0:
@@ -447,6 +451,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             logs_dict.update(
                 self.strategy.all_reduce(
                     {"misc/query_step": self.query_step},
+                    {"misc/prompt_consumed": self.prompt_consumed},
                     op="sum",
                 )
             )

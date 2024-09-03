@@ -15,8 +15,8 @@ from ellm.utils.buffer import UniformBuffer
 
 class RewardModel(abc.ABC, nn.Module):
 
-    train_bs = 32
-    infer_bs = 32
+    train_bs = 128
+    infer_bs = 128
 
     @abc.abstractclassmethod
     def get_metrics(cls):
@@ -194,6 +194,8 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": 0,
             "train/rm/loss_reg": 0,
+            "train/rm/chosen_rewards": 0,
+            "train/rm/rejected_rewards": 0,
             "train/rm/lambda": 0,
         }
 
@@ -291,6 +293,8 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": loss_rew.detach(),
             "train/rm/loss_reg": loss_reg.detach(),
+            "train/rm/chosen_rewards": chosen_scores.mean().detach(),
+            "train/rm/rejected_rewards": rejected_scores.mean().detach(),
             "train/rm/lambda": self.reg_lambda * self.train_bs / total_num_queries,
         }
 
