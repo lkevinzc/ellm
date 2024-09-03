@@ -450,8 +450,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             logs_dict = self.strategy.all_reduce(logs_dict)
             logs_dict.update(
                 self.strategy.all_reduce(
-                    {"misc/query_step": self.query_step},
-                    {"misc/prompt_consumed": self.prompt_consumed},
+                    {
+                        "misc/query_step": self.query_step,
+                        "misc/prompt_consumed": self.prompt_consumed,
+                    },
                     op="sum",
                 )
             )
