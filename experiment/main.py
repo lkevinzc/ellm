@@ -4,6 +4,7 @@ import launchpad as lp
 
 from ellm.interface import get_program
 from ellm.learners import DAPLearner, DAPwRMLearner
+from ellm.types import DAPAlgo
 
 
 def main(args):
@@ -24,6 +25,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="default")
+
+    parser.add_argument(
+        "--dap_algo",
+        type=str,
+        choices=["DPO", "IPO", "SimPO"],
+        default="SimPO",
+        help="Direct alignment from preference method.",
+    )
 
     parser.add_argument("--pretrain", type=str, default="google/gemma-2b")
     parser.add_argument("--ref_pretrain", type=str, default=None)
@@ -75,13 +84,15 @@ if __name__ == "__main__":
     parser.add_argument("--dump_reward_buffer", action="store_true")
 
     # Exploration
+    parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
     parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument("--learn_rm_only", action="store_true")
+    parser.add_argument("--model_rollout", action="store_true")
 
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "EnnDTS", "LmcFGTS"],
+        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "LmcFGTS"],
         default="no",
         help="Types of exploration.",
     )
@@ -142,9 +153,6 @@ if __name__ == "__main__":
     parser.add_argument("--l2", type=float, default=0.0)
     parser.add_argument("--beta", type=float, default=2.0)
     parser.add_argument(
-        "--ipo", action="store_true", default=False
-    )  # IPO https://arxiv.org/pdf/2310.12036v2.pdf
-    parser.add_argument(
         "--label_smoothing", type=float, default=0.0
     )  # cDPO https://arxiv.org/pdf/2305.18290.pdf
     parser.add_argument(
@@ -197,7 +205,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Validation.
-    if args.ref_pretrain is None or args.ref_pretrain == "":
+    args.dap_algo = getattr(DAPAlgo, args.dap_algo)
+    if args.dap_algo != DAPAlgo.SimPO and (
+        args.ref_pretrain is None or args.ref_pretrain == ""
+    ):
         args.ref_pretrain = args.pretrain
     if args.learn_rm:
         assert args.exp_method != "no" and args.exp_pretrain == ""

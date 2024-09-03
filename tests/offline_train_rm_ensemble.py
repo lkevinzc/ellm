@@ -15,7 +15,7 @@ def main(
     num_ensemble=3,
     learning_rate=1e-3,
     weight_decay=0,
-    weight_reg=0,
+    weight_reg=0.1,
     gradient_accumulation=8,
     activation="relu",
     track=False,

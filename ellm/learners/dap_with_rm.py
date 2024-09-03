@@ -40,13 +40,18 @@ class DAPwRMLearner(DAPLearner):
         same_masks = torch.tensor([data.same for data in data_list]).to(
             torch.cuda.current_device()
         )  # (micro_b,)
+        model_data_masks = torch.tensor([data.is_model_data for data in data_list]).to(
+            torch.cuda.current_device()
+        )  # (micro_b,)
 
         all_pair_feats = self.strategy.gather(pair_feats)
         all_same_masks = self.strategy.gather(same_masks)
+        all_model_data_masks = self.strategy.gather(model_data_masks)
         if self.rm:
             self.r_buffer.extend(
                 RewardData(
-                    pair_features=all_pair_feats, loss_masks=1 - all_same_masks.float()
+                    pair_features=all_pair_feats,
+                    loss_masks=1 - (all_same_masks | all_model_data_masks).float(),
                 )
             )
 

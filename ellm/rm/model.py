@@ -15,8 +15,8 @@ from ellm.utils.buffer import UniformBuffer
 
 class RewardModel(abc.ABC, nn.Module):
 
-    train_bs = 32
-    infer_bs = 32
+    train_bs = 128
+    infer_bs = 128
 
     @abc.abstractclassmethod
     def get_metrics(cls):
@@ -25,14 +25,14 @@ class RewardModel(abc.ABC, nn.Module):
     @abc.abstractmethod
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         """Get dueling actions based on rewards of given features.
 
         Args:
             features (torch.Tensor): (M, N, d)
 
         Returns:
-            Tuple[torch.LongTensor]: [(M, 1), (M, 1)]
+            Tuple[torch.LongTensor]: rewards, first and second indices [(E or 2, M, N, 1), (M, 1), (M, 1)]
         """
 
     @abc.abstractmethod
@@ -139,11 +139,11 @@ class LmcFGTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         best_actions = rewards.argmax(dim=2)
         first_actions, second_actions = best_actions
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
@@ -194,6 +194,8 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": 0,
             "train/rm/loss_reg": 0,
+            "train/rm/chosen_rewards": 0,
+            "train/rm/rejected_rewards": 0,
             "train/rm/lambda": 0,
         }
 
@@ -238,7 +240,7 @@ class EnnDTS(RewardModel):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
         rewards = self._get_rewards(features)
         E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
@@ -264,7 +266,7 @@ class EnnDTS(RewardModel):
         second_actions = torch.where(
             second_actions == -1, first_actions, second_actions
         )
-        return first_actions, second_actions
+        return rewards, first_actions, second_actions
 
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         total_num_queries = buffer.total_num_queries
@@ -291,8 +293,65 @@ class EnnDTS(RewardModel):
         return {
             "train/rm/loss_rew": loss_rew.detach(),
             "train/rm/loss_reg": loss_reg.detach(),
+            "train/rm/chosen_rewards": chosen_scores.mean().detach(),
+            "train/rm/rejected_rewards": rejected_scores.mean().detach(),
             "train/rm/lambda": self.reg_lambda * self.train_bs / total_num_queries,
         }
+
+
+class EnnInfoMax(EnnDTS):
+
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
+        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        _, M, N, _ = rewards.shape
+        pref_logits = rewards - einops.rearrange(
+            rewards, "e m n 1 -> e m 1 n"
+        )  # (E, M, N, N')
+        pref_uncertainty = torch.tril(pref_logits.std(dim=0))
+        flatten_idx = pref_uncertainty.view(M, -1).argmax(-1)
+        first_actions = flatten_idx // N
+        second_actions = flatten_idx % N
+        return rewards, first_actions.view(M, 1), second_actions.view(M, 1)
+
+
+class EnnTSInfoMax(EnnDTS):
+
+    @torch.no_grad
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
+        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        E, M, _, _ = rewards.shape
+        best_actions = rewards.argmax(dim=2)  # (E, M, 1)
+        # sample without replacement
+        s1 = list(range(E // 2))
+        random.shuffle(s1)
+        s2 = list(range(E // 2, E))
+        random.shuffle(s2)
+        first_actions = best_actions[s1[0]]
+        second_actions = torch.ones_like(first_actions) * -1
+        for actions in best_actions[s2[: self.max_resample]]:
+            valid_idx = (actions != first_actions) * (second_actions == -1)
+            second_actions[valid_idx] = actions[valid_idx]
+            if -1 not in second_actions:
+                break
+
+        # TODO remove this ugly half-half later because we will not do fg-ts comparison; AND remove fg-ts related codes
+        half_rewards = rewards[s2]
+        pref_logits = half_rewards - einops.rearrange(
+            half_rewards, "e m n 1 -> e m 1 n"
+        )  # (E/2, M, N, N')
+        pref_uncertainty = pref_logits.std(dim=0)
+
+        second_actions_info_max = torch.stack(
+            [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
+        ).view(M, 1)
+
+        second_actions = torch.where(
+            second_actions == -1, second_actions_info_max, second_actions
+        )
+        return rewards, first_actions, second_actions
 
 
 def default_weight_loader(param: torch.Tensor, loaded_weight: torch.Tensor) -> None:

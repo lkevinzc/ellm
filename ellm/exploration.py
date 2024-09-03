@@ -1,12 +1,15 @@
+from argparse import Namespace
 from dataclasses import dataclass
 from typing import Dict, List
 
+import numpy as np
 import torch
 import tree
 from transformers import AutoTokenizer
 
 from ellm.rm.backbone import DebertaV2PairRM
 from ellm.rm.model import RewardModel
+from ellm.types import Metric
 
 
 @dataclass
@@ -14,12 +17,13 @@ class ExplorationResults:
     dueling_candidates: Dict[int, List[str]]
     candidate_features: torch.Tensor
     init_clash: List[bool]
+    info: Metric
 
 
 class Explorer:
-    def __init__(self, reward_model: RewardModel, random_sampling: bool) -> None:
+    def __init__(self, reward_model: RewardModel, args: Namespace) -> None:
         self.backbone = DebertaV2PairRM.from_pretrained(
-            "llm-blender/PairRM-hf", device_map="cuda:0"
+            args.rm_backbone, device_map="cuda:0"
         ).eval()
         self.tokenizer = AutoTokenizer.from_pretrained("llm-blender/PairRM-hf")
         self.source_prefix = "<|source|>"
@@ -29,7 +33,7 @@ class Explorer:
         self.backbone_bs = 8
 
         self.reward_model = reward_model.cuda()
-        self.random_sampling = random_sampling
+        self.random_sampling = args.exp_rnd_sample
 
     def best_of_n(
         self,
@@ -71,17 +75,43 @@ class Explorer:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         features = self._get_features(prompts, candidates)  # (M, N, d)
-        first_indices, second_indices = self.reward_model.get_duel_actions(
+        rewards, first_indices, second_indices = self.reward_model.get_duel_actions(
             features
-        )  # both (M, 1)
+        )  # rewards: (E or 2, M, N, 1); indices: both (M, 1)
 
+        init_clash = (second_indices == first_indices).cpu().squeeze()
+        rewards_with_agreed_best = rewards[:, init_clash]
+        clashed_best_indices = second_indices[init_clash]
+        agreed_best_resp_std = np.mean(
+            [
+                torch.std(rewards_with_agreed_best[:, i, clashed_best_indices[i]]).cpu()
+                for i in range(len(clashed_best_indices))
+            ]
+        )
+        rewards_without_agreed_best = rewards[:, ~init_clash]
+        not_clashed_best_indices = second_indices[~init_clash]
+        not_agreed_best_resp_std = np.mean(
+            [
+                torch.std(
+                    rewards_without_agreed_best[:, i, not_clashed_best_indices[i]]
+                ).cpu()
+                for i in range(len(not_clashed_best_indices))
+            ]
+        )
         # In the case where both responses are the same, do random sampling
-        init_clash = (second_indices == first_indices).cpu().squeeze().tolist()
         if self.random_sampling:
             N = features.shape[1]
-            rand_indices = torch.randint_like(second_indices, N)
+            rnd_second_indices = torch.ones_like(second_indices) * -1
+            for _ in range(3):
+                # Clash prob 1 / N^3
+                rand_indices = torch.randint_like(second_indices, N)
+                valid_idx = (rand_indices != first_indices) * (rnd_second_indices == -1)
+                rnd_second_indices[valid_idx] = rand_indices[valid_idx]
+                if -1 not in rnd_second_indices:
+                    break
+
             second_indices = torch.where(
-                second_indices == first_indices, rand_indices, second_indices
+                second_indices == first_indices, rnd_second_indices, second_indices
             )
 
         selected_candidate_indices = torch.cat(
@@ -102,7 +132,13 @@ class Explorer:
                 if return_features
                 else None
             ),
-            init_clash=init_clash,
+            init_clash=init_clash.tolist(),
+            info={
+                "explorer/agreed_best_resp_std": np.nan_to_num(agreed_best_resp_std),
+                "explorer/not_agreed_best_resp_std": np.nan_to_num(
+                    not_agreed_best_resp_std
+                ),
+            },
         )
 
     def _get_features(

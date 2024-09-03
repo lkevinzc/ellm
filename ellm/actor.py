@@ -14,7 +14,7 @@ from ellm.utils.ipc import PlasmaShmClient
 
 
 class Actor:
-    """Actor handles the interaction between the exploration policy and the environment."""
+    """Actor handles the interaction between the LLM policy and the environment."""
 
     def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         self.args = args
@@ -57,7 +57,7 @@ class Actor:
             assert sampling_params.n > 2
             self.explorer = Explorer(
                 getattr(model, args.exp_method)(args),
-                random_sampling=args.exp_rnd_sample,
+                args=args,
             )
             if args.exp_pretrain:
                 print(f"Loading pretrained ENN from {args.exp_pretrain}")
@@ -66,6 +66,7 @@ class Actor:
                 )
             else:
                 self.learning_rm = True  # Learn RM online.
+        self.model_rollout = args.model_rollout
 
         # ###################################
         # ####  Best-of-N for Evaluation ####
@@ -82,7 +83,9 @@ class Actor:
         )  # TODO hard-code first for tl;dr
 
     def _generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
-        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
+        outputs = self.llm.generate(
+            prompts, sampling_params=sampling_params, use_tqdm=False
+        )
         candidates = {}
         for i in range(len(outputs)):
             # for each prompt
@@ -112,7 +115,7 @@ class Actor:
 
         if references:
             win_logits = self.blender.compare(
-                prompts, responses, references, return_logits=True
+                prompts, responses, references, return_logits=True, disable_tqdm=True
             )
             win_probs = torch.from_numpy(win_logits).sigmoid().numpy()
             return responses, win_probs
@@ -151,6 +154,8 @@ class Actor:
         """
         assert not self.eval_mode
         info = dict()
+        is_model_data = [False] * len(prompts)
+
         # step 1. generate
         candidates = self._generate(prompts, self.sampling_params)
 
@@ -163,6 +168,10 @@ class Actor:
             )
             candidates = results.dueling_candidates
 
+            if self.model_rollout:
+                # Use random sampling from explorer first; refactor later
+                maybe_model_data = results.init_clash
+
         # step 2b. optional online eval
         if self.enable_online_evaluation:
             assert references is not None
@@ -174,12 +183,26 @@ class Actor:
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
+            disable_tqdm=True,
         )
         bt_probs = torch.from_numpy(logits).sigmoid()
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
 
         binary_feedback = logits > 0
         chosen = 1 - binary_feedback
+        if self.model_rollout:
+            # Record metric and overwrite label.
+            model_rollout_correct = chosen[maybe_model_data] == 0
+            model_rollout_acc = np.sum(model_rollout_correct) / (
+                np.sum(maybe_model_data) + 1e-8
+            )
+            info["eval/model_rollout_acc"] = model_rollout_acc
+
+            if model_rollout_acc > 0.9:
+                # privileged information
+                is_model_data = maybe_model_data
+                chosen[is_model_data] = 0
+
         rejected = 1 - chosen
 
         same_response = [
@@ -198,6 +221,7 @@ class Actor:
             ) / (np.sum(support) + 1e-8)
             info["eval/rm_acc"] = rm_acc
 
+        info.update(results.info)
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],
@@ -215,6 +239,7 @@ class Actor:
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=same_response[i],
+                is_model_data=is_model_data[i],
                 info=info,
             )
             for i in range(len(prompts))
@@ -250,7 +275,6 @@ class Actor:
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
         params_dict = dict(self.explorer.reward_model.named_parameters())
         model.default_weight_loader(params_dict[name], weight)
-        print(f"update reward model weight {name}")
         del weight
 
     def notify_eval_start(self):
