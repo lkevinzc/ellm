@@ -84,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("--dump_reward_buffer", action="store_true")
 
     # Exploration
+    parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
     parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument("--learn_rm_only", action="store_true")
     parser.add_argument("--model_rollout", action="store_true")

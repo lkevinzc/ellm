@@ -23,7 +23,7 @@ class ExplorationResults:
 class Explorer:
     def __init__(self, reward_model: RewardModel, args: Namespace) -> None:
         self.backbone = DebertaV2PairRM.from_pretrained(
-            "llm-blender/PairRM-hf", device_map="cuda:0"
+            args.rm_backbone, device_map="cuda:0"
         ).eval()
         self.tokenizer = AutoTokenizer.from_pretrained("llm-blender/PairRM-hf")
         self.source_prefix = "<|source|>"
