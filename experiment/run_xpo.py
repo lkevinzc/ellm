@@ -1,16 +1,12 @@
 import launchpad as lp
 
 from ellm.args import default_args_validation, get_default_parser
+from ellm.baselines.xpo import XPOActor, XPOLearner
 from ellm.interface import get_program
-from ellm.learners import DAPLearner, DAPwRMLearner
 
 
 def run_xpo(args):
-    if args.learn_rm:
-        learner_cls = DAPwRMLearner
-    else:
-        learner_cls = DAPLearner
-    program, local_resources = get_program(args, learner_cls)
+    program, local_resources = get_program(args, XPOLearner, XPOActor)
     lp.launch(
         program,
         launch_type="local_mp",

@@ -11,7 +11,9 @@ from ellm.utils.ipc import PlasmaShmServer
 from ellm.utils.launcher import get_free_port
 
 
-def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
+def get_program(
+    args: Namespace, learner_cls: Type[LearnerBase], actor_cls: Type[Actor] = Actor
+):
     """Define the default distributed program topology with configs."""
     program = lp.Program("online_dap")
 
@@ -53,7 +55,7 @@ def get_program(args: Namespace, learner_cls: Type[LearnerBase]):
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(Actor, ipc_server, vllm_args, sampling_params, args),
+                lp.CourierNode(actor_cls, ipc_server, vllm_args, sampling_params, args),
                 label=label,
             )
         )

@@ -347,7 +347,7 @@ class PreferenceDataset(Dataset):
             "prompt_ids_lens": self.prompt_ids_lens[idx],
             "same_masks": self.same_masks[idx],
             "chosen_ids": self.chosen_ids[idx],
-        }
+        }  # Modify collate_fn below as well.
 
         chosen = (prompt + chosen).rstrip("\n")
         if not chosen.endswith(self.tokenizer.eos_token):
@@ -390,10 +390,7 @@ class PreferenceDataset(Dataset):
         chosen_masks = []
         rejected_ids = []
         rejected_masks = []
-        extras = {
-            "prompt_ids_lens": [],
-            "same_masks": [],
-        }
+        extras = {"prompt_ids_lens": [], "same_masks": [], "chosen_ids": []}
         for chosen_id, chosen_mask, rejected_id, rejected_mask, extra in item_list:
             chosen_ids.append(chosen_id)
             chosen_masks.append(chosen_mask)
@@ -401,6 +398,7 @@ class PreferenceDataset(Dataset):
             rejected_masks.append(rejected_mask)
             extras["prompt_ids_lens"].append(extra["prompt_ids_lens"])
             extras["same_masks"].append(extra["same_masks"])
+            extras["chosen_ids"].append(extra["chosen_ids"])
 
         padding_side = "right"
         chosen_ids = _zero_pad_sequences(

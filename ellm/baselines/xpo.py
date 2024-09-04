@@ -14,13 +14,13 @@ class XPOActor(actor.Actor):
     def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         super().__init__(ipc_server, vllm_args, sampling_params, args)
         self.ref_llm = vllm.LLM(**vllm_args)
+        self.sampling_params.n = 1  # one for each llm
 
     def generate(self, prompts: actor.List[str], sampling_params: vllm.SamplingParams):
         if self.eval_mode:
             return super().generate(prompts, sampling_params)
 
-        assert sampling_params.n == 2
-        sampling_params.n = 1
+        assert sampling_params.n == 1
         candidates = {}
 
         for llm in [self.llm, self.ref_llm]:

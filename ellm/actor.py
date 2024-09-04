@@ -162,6 +162,7 @@ class Actor:
         candidates = self.generate(prompts, self.sampling_params)
 
         # step 2a. optional selection
+        results = None
         if self.sampling_params.n > 2:
             print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
@@ -221,7 +222,9 @@ class Actor:
             ) / (np.sum(support) + 1e-8)
             info["eval/rm_acc"] = rm_acc
 
-        info.update(results.info)
+        if results is not None:
+            info.update(results.info)
+
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],

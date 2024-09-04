@@ -197,3 +197,4 @@ def default_args_validation(args):
         assert args.exp_method != "no" and args.exp_pretrain == ""
     if args.learn_rm_only:
         assert args.best_of_n_eval
+    return args

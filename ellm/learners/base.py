@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
+import tree
 import vllm
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
@@ -381,9 +382,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 infos = self.learning_step(data)
 
                 # metrics
-                loss = infos["loss"]
-                chosen_reward = infos["chosen_reward"]
-                rejected_reward = infos["rejected_reward"]
+                loss = infos.pop("loss")
+                chosen_reward = infos.pop("chosen_reward")
+                rejected_reward = infos.pop("rejected_reward")
                 acc_mean.append((chosen_reward > rejected_reward).float().mean().item())
                 loss_mean.append(loss.cpu().item())
                 reward_margin.append((chosen_reward - rejected_reward).mean().item())
@@ -404,6 +405,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "loss_mean": np.mean(loss_mean),
             "reward_margin": np.mean(reward_margin),
             "learning_round": learning_round,
+            **tree.map_structure(lambda x: x.cpu().float().mean().item(), infos),
         }
         train_info = {
             "train/%s" % k: v
