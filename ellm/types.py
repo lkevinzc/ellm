@@ -16,6 +16,7 @@ class DAPAlgo(Enum):
 @dataclass
 class PreferenceData:
     prompt: str
+    chosen_id: int
     chosen_response: str
     rejected_response: str
     chosen_feature: torch.Tensor

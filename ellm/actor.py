@@ -225,6 +225,7 @@ class Actor:
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],
+                chosen_id=chosen[i],
                 chosen_response=candidates[i][chosen[i]],
                 rejected_response=candidates[i][rejected[i]],
                 chosen_feature=(

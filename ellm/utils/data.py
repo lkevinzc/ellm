@@ -197,7 +197,7 @@ def _preprocess_preference_data(
         # if input_template:
         #     prompt = input_template.format(prompt)
 
-    return prompt, chosen, rejected, data.same
+    return prompt, chosen, rejected, data.same, data.chosen_id
 
 
 class PromptDataset(Dataset):
@@ -288,6 +288,7 @@ class PreferenceDataset(Dataset):
         self.rejected_responses = []
         self.prompt_ids_lens = []
         self.same_masks = []
+        self.chosen_ids = []
 
         self.tokenizer = tokenizer
         self.strategy = strategy
@@ -307,9 +308,11 @@ class PreferenceDataset(Dataset):
         self.strategy.print("Constructing preference dataset...")
 
         for data in tqdm(buffer, disable=not self.strategy.is_rank_0()):
-            prompt, chosen, rejected, same_mask = _preprocess_preference_data(
-                data,
-                apply_chat_template,
+            prompt, chosen, rejected, same_mask, chosen_id = (
+                _preprocess_preference_data(
+                    data,
+                    apply_chat_template,
+                )
             )
             prompt_token = self.tokenizer(
                 prompt,
@@ -329,6 +332,7 @@ class PreferenceDataset(Dataset):
             self.chosen_responses.append(chosen)
             self.rejected_responses.append(rejected)
             self.same_masks.append(same_mask)
+            self.chosen_ids.append(chosen_id)
 
     def __len__(self):
         return len(self.prompts)
@@ -342,6 +346,7 @@ class PreferenceDataset(Dataset):
         extra = {
             "prompt_ids_lens": self.prompt_ids_lens[idx],
             "same_masks": self.same_masks[idx],
+            "chosen_ids": self.chosen_ids[idx],
         }
 
         chosen = (prompt + chosen).rstrip("\n")
