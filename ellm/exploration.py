@@ -1,3 +1,4 @@
+import abc
 from argparse import Namespace
 from dataclasses import dataclass
 from typing import Dict, List
@@ -20,7 +21,41 @@ class ExplorationResults:
     info: Metric
 
 
-class Explorer:
+class ExplorerBase(abc.ABC):
+    @abc.abstractmethod
+    def best_of_n(
+        self,
+        prompts: List[str],
+        candidates: Dict[int, List[str]],
+    ) -> List[str]:
+        """Best-of-N generation given the reward model.
+
+        Args:
+            prompts (List[str]): A list of prompt texts, M
+            candidates (Dict[int, List[str]]): Lists of responses per prompt, M -> N
+
+        Returns:
+            List[str]: A list of the best response per prompt.
+        """
+
+    @abc.abstractmethod
+    def select(
+        self,
+        prompts: List[str],
+        candidates: Dict[int, List[str]],
+    ) -> ExplorationResults:
+        """Select dueling responses from candidates.
+
+        Args:
+            prompts (List[str]): A list of prompt texts, M
+            candidates (Dict[int, List[str]]): Lists of responses per prompt, M -> N
+
+        Returns:
+            ExplorationResults: Pair of responses per prompt (and features), M -> 2
+        """
+
+
+class Explorer(ExplorerBase):
     def __init__(self, reward_model: RewardModel, args: Namespace) -> None:
         self.backbone = DebertaV2PairRM.from_pretrained(
             args.rm_backbone, device_map="cuda:0"
@@ -62,14 +97,12 @@ class Explorer:
         self,
         prompts: List[str],
         candidates: Dict[int, List[str]],
-        return_features: bool,
     ) -> ExplorationResults:
         """Select dueling responses from candidates.
 
         Args:
             prompts (List[str]): A list of prompt texts, M
             candidates (Dict[int, List[str]]): Lists of responses per prompt, M -> N
-            return_features (bool): Whether return features of (prompt, response)
 
         Returns:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
@@ -129,8 +162,6 @@ class Explorer:
                         for i in range(len(prompts))
                     ]
                 ).cpu()
-                if return_features
-                else None
             ),
             init_clash=init_clash.tolist(),
             info={

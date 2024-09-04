@@ -55,6 +55,7 @@ class Actor:
             ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
         else:
             assert sampling_params.n > 2
+            # We assume reward model-based explorer.
             self.explorer = Explorer(
                 getattr(model, args.exp_method)(args),
                 args=args,
@@ -82,7 +83,7 @@ class Actor:
             max_tokens=200,
         )  # TODO hard-code first for tl;dr
 
-    def _generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
+    def generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
         outputs = self.llm.generate(
             prompts, sampling_params=sampling_params, use_tqdm=False
         )
@@ -105,7 +106,7 @@ class Actor:
         2) Optionally evaluate the win rate over references based on the oracle reward model.
         """
         assert self.eval_mode
-        candidates = self._generate(prompts, self.eval_sampling_params)
+        candidates = self.generate(prompts, self.eval_sampling_params)
 
         if self.num_eval_gen > 1:
             # best of n sampling
@@ -150,22 +151,21 @@ class Actor:
         The final constructed pair (x, y_w, y_l) is inserted into the replay buffer for learners.
 
         Args:
-            prompt: A list of prompt texts.
+            prompts: A list of prompt texts.
+            references: A list of reference texts.
         """
         assert not self.eval_mode
         info = dict()
         is_model_data = [False] * len(prompts)
 
         # step 1. generate
-        candidates = self._generate(prompts, self.sampling_params)
+        candidates = self.generate(prompts, self.sampling_params)
 
         # step 2a. optional selection
         if self.sampling_params.n > 2:
             print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
-            results: ExplorationResults = self.explorer.select(
-                prompts, candidates, return_features=self.learning_rm
-            )
+            results: ExplorationResults = self.explorer.select(prompts, candidates)
             candidates = results.dueling_candidates
 
             if self.model_rollout:
