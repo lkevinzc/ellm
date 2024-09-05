@@ -207,6 +207,7 @@ class EnnDTS(RewardModel):
             encoding_dim=2048,  # Fixed due to PairRM's backbone
             num_ensemble=args.num_ensemble,
             hidden_dim=args.rm_hidden_dim,
+            activation=args.rm_act_fn,
         )
         self.model.init()
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)

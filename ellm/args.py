@@ -84,6 +84,8 @@ def get_default_parser():
 
     parser.add_argument("--rm_lr", type=float, default=1e-3)
     parser.add_argument("--rm_hidden_dim", type=int, default=128)
+    parser.add_argument("--rm_act_fn", type=str, default="relu")
+
     parser.add_argument("--rm_sgd_steps", type=int, default=1)
     parser.add_argument("--rm_fixed_reg", action="store_true")
 
