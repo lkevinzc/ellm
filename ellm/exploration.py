@@ -6,9 +6,8 @@ from typing import Dict, List
 import numpy as np
 import torch
 import tree
-from transformers import AutoTokenizer
 
-from ellm.rm.backbone import DebertaV2PairRM
+from ellm.rm.backbone import RMBackbone
 from ellm.rm.model import RewardModel
 from ellm.types import Metric
 
@@ -56,18 +55,16 @@ class ExplorerBase(abc.ABC):
 
 
 class Explorer(ExplorerBase):
-    def __init__(self, reward_model: RewardModel, args: Namespace) -> None:
-        self.backbone = DebertaV2PairRM.from_pretrained(
-            args.rm_backbone, device_map="cuda:0"
-        ).eval()
-        self.tokenizer = AutoTokenizer.from_pretrained("llm-blender/PairRM-hf")
-        self.source_prefix = "<|source|>"
-        self.cand_prefix = "<|candidate|>"
+    def __init__(
+        self, reward_model: RewardModel, rm_backbone: RMBackbone, args: Namespace
+    ) -> None:
+        self.backbone = rm_backbone
+        self.reward_model = reward_model
+
         self.max_length = 2048
         self.source_max_length = 1224
         self.backbone_bs = 8
 
-        self.reward_model = reward_model.cuda()
         self.random_sampling = args.exp_rnd_sample
 
     def best_of_n(
@@ -181,20 +178,15 @@ class Explorer(ExplorerBase):
         M = len(prompts)
         N = len(candidates[0])
         for i in range(M):
-            source_ids = self.tokenizer.encode(
-                self.source_prefix + prompts[i],
-                max_length=self.source_max_length,
-                truncation=True,
-            )
-            candidate_max_length = self.max_length - len(source_ids)
             for j in range(N):
-                candidate_ids = self.tokenizer.encode(
-                    self.cand_prefix + candidates[i][j],
-                    max_length=candidate_max_length,
-                    truncation=True,
+                pair_ids = self.backbone.tokenize_pair(
+                    prompt=prompts[i],
+                    candidate=candidates[i][j],
+                    source_max_length=self.source_max_length,
+                    max_length=self.max_length,
                 )
-                input_ids.append(source_ids + candidate_ids)
-        encodings = self.tokenizer.pad(
+                input_ids.append(pair_ids)
+        encodings = self.backbone.tokenizer.pad(
             {"input_ids": input_ids},
             return_tensors="pt",
         )

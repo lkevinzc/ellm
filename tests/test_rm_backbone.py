@@ -67,7 +67,10 @@ def collate_fn(item_list: List[PreferenceData]):
     return encodings
 
 
+test_out = collate_fn(data[:4])
+test_enc = {k: v.to(backbone.device) for k, v in test_out.items()}
 pdb.set_trace()
+
 dl = DataLoader(data, batch_size=4, drop_last=False, collate_fn=collate_fn)
 outputs = []
 for enc in tqdm(dl):

@@ -75,6 +75,7 @@ class PreferenceCollector:
             "actor/model_data_ratio": np.mean(
                 [p.is_model_data for p in preference_data]
             ),
+            "actor/chosen_id": np.mean([p.chosen_id for p in preference_data]),
         }
 
         mean_info = tree.map_structure(
