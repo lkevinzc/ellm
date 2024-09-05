@@ -8,6 +8,7 @@ import vllm
 
 from ellm.exploration import ExplorationResults, Explorer
 from ellm.rm import model
+from ellm.rm.backbone import DebertaV2PairRM, DebertaV2Vanilla
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
 from ellm.utils.ipc import PlasmaShmClient
@@ -56,8 +57,16 @@ class Actor:
         else:
             assert sampling_params.n > 2
             # We assume reward model-based explorer.
+            print("Using RM backbone", args.rm_backbone)
+            if args.rm_backbone == "llm-blender/PairRM-hf":
+                cls = DebertaV2PairRM
+            else:
+                cls = DebertaV2Vanilla
             self.explorer = Explorer(
-                getattr(model, args.exp_method)(args),
+                reward_model=getattr(model, args.exp_method)(args).cuda(),
+                rm_backbone=cls.from_pretrained(
+                    args.rm_backbone, device_map="cuda:0"
+                ).eval(),
                 args=args,
             )
             if args.exp_pretrain:
