@@ -259,22 +259,21 @@ def implicit_reward_filtering(
             prompt_response_masks,
             len(output.prompt_token_ids),
         )
-        # NOTE: the different will be zero until the policy is updated.
-        implicit_rewards = logprobs - logprobs_ref
-
         M = len(prompt_response_ids)
+        implicit_rewards = logprobs - logprobs_ref
+        # NOTE the above will be zero until the policy is updated, need to avoid
+        # selecting the same response during argmax, so subtract identity.
         reward_margins = torch.abs(
             implicit_rewards.view(M, 1) - implicit_rewards.view(1, M)
         ) - torch.eye(M, device=implicit_rewards.device)
-        avg_margins.append(reward_margins.mean().cpu().item())
-        selected_margins.append(reward_margins.max().cpu().item())
-
-        # print(logprobs, logprobs_ref, implicit_rewards, reward_margins)
 
         max_idx = reward_margins.argmax()
         pair_indices = [max_idx // M, max_idx % M]
         prompts.append(output.prompt)
         candidates[i] = [output.outputs[j].text for j in pair_indices]
+
+        avg_margins.append(reward_margins.mean().cpu().item())
+        selected_margins.append(reward_margins.max().cpu().item())
 
     return (
         prompts,
