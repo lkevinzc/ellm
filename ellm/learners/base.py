@@ -28,12 +28,12 @@ from ellm.preference import PreferenceCollector
 from ellm.types import DAPAlgo, PreferenceData
 from ellm.utils.data import (PreferenceDataset, PromptDataset,
                              blending_datasets, get_tokenizer)
+from ellm.utils.deepspeed import get_strategy
 from ellm.utils.distributed import (init_process_group,
                                     node_ip_address_from_perspective,
                                     torch_type_codec)
 from ellm.utils.ipc import PlasmaShmServer
 from ellm.utils.launcher import DistributedLauncher
-from ellm.utils.setup import get_strategy
 
 
 class LearnerBase(abc.ABC, DistributedLauncher):
