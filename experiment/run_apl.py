@@ -17,6 +17,16 @@ def run_apl(args):
 
 if __name__ == "__main__":
     parser = get_default_parser()
+    parser.add_argument(
+        "--apl_pref_certainty_only",
+        help=(
+            "Fig 2b and Fig 5 both show this variant is better than random, "
+            "while Fig 2b shows the learning is not robust with entropy."
+        ),
+        action="store_true",
+    )
 
     args = default_args_validation(parser.parse_args())
+    if args.apl_pref_certainty_only:
+        args.num_samples = 2
     run_apl(args)

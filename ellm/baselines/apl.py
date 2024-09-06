@@ -39,20 +39,20 @@ class APLActor(actor.Actor):
         )
         print("generated", len(outputs), len(outputs[0].outputs))
 
-        # Predictive entropy estimation.
-        entropy_estimations = []
-        for output in outputs:
-            entropy = 0
-            for resp_output in output.outputs:
-                entropy += resp_output.cumulative_logprob
-            entropy /= len(output.outputs)
-            entropy_estimations.append(entropy)
-        ent_filtered_indices = np.argsort(entropy_estimations)[
-            -self.args.micro_pi_buffer_maxlen :
-        ]  # Online and on-policy; as stated in their Appendix D.
-        outputs = [outputs[i] for i in ent_filtered_indices]
-
-        print("filtered", len(outputs), len(outputs[0].outputs))
+        if not self.args.apl_pref_certainty_only:
+            # Predictive entropy estimation.
+            entropy_estimations = []
+            for output in outputs:
+                entropy = 0
+                for resp_output in output.outputs:
+                    entropy += resp_output.cumulative_logprob
+                entropy /= len(output.outputs)
+                entropy_estimations.append(entropy)
+            ent_filtered_indices = np.argsort(entropy_estimations)[
+                -self.args.micro_pi_buffer_maxlen :
+            ]  # Online and on-policy; as stated in their Appendix D.
+            outputs = [outputs[i] for i in ent_filtered_indices]
+            print("filtered", len(outputs), len(outputs[0].outputs))
 
         handle = self.ipc_client.serialize_ipc(outputs)
         return handle
@@ -165,10 +165,23 @@ class APLLearner(DAPLearner):
                 outputs: List[RequestOutput] = self.ipc_client.deserialize_ipc(handle)
 
                 # APL Algo 1, Line 8-9: get implicit reward margin and select pairs.
-                print("len output", len(outputs), len(outputs[0].outputs))
-                prompts, candidates, info = implicit_reward_filtering(
-                    self.model, self.ref_model, self.tokenizer, outputs
-                )
+                if self.args.apl_pref_certainty_only:
+                    print(
+                        "after entropy filtering", len(outputs), len(outputs[0].outputs)
+                    )
+                    # Keep all filtered prompts; select response pair.
+                    prompts, candidates, info = implicit_reward_filtering_response_only(
+                        self.model, self.ref_model, self.tokenizer, outputs
+                    )
+                else:
+                    # Select the (x, y, y') triplet.
+                    prompts, candidates, info = implicit_reward_filtering_triplet(
+                        self.model,
+                        self.ref_model,
+                        self.tokenizer,
+                        outputs,
+                        self.args.micro_pi_buffer_maxlen,
+                    )
 
                 # APL Algo 1, Line 10: query oracle RM.
                 handle = actor.query_oracle(
@@ -218,7 +231,7 @@ class APLLearner(DAPLearner):
             lp.stop()
 
 
-def implicit_reward_filtering(
+def implicit_reward_filtering_response_only(
     policy_model: LLM,
     ref_model: LLM,
     tokenizer: PreTrainedTokenizer,
@@ -230,7 +243,6 @@ def implicit_reward_filtering(
 
     avg_margins = []
     selected_margins = []
-    print("number of outputs", len(outputs))
     for i, output in enumerate(outputs):
         # for each prompt
         prompt_response_ids = [
@@ -281,6 +293,66 @@ def implicit_reward_filtering(
         {
             "actor/avg_margins": np.mean(avg_margins),
             "actor/selected_margins": np.mean(selected_margins),
+        },
+    )
+
+
+def implicit_reward_filtering_triplet(
+    policy_model: LLM,
+    ref_model: LLM,
+    tokenizer: PreTrainedTokenizer,
+    outputs: List[RequestOutput],
+    num_keep: int,
+) -> Tuple[List[str], Dict[str, List[str]], Metric]:
+    """Select the response pair that gives the largest implicit reward margin."""
+    scores = []
+
+    for output in outputs:
+        # for each prompt
+        prompt_response_ids = [
+            torch.tensor(output.prompt_token_ids + o.token_ids) for o in output.outputs
+        ]
+        assert len(prompt_response_ids) == 2
+        prompt_response_masks = [torch.ones_like(ids) for ids in prompt_response_ids]
+
+        prompt_response_ids = zero_pad_sequences(
+            prompt_response_ids, side="right", value=tokenizer.pad_token_id
+        )
+        prompt_response_masks = zero_pad_sequences(prompt_response_masks, side="right")
+
+        prompt_response_ids = prompt_response_ids.cuda()
+        prompt_response_masks = prompt_response_masks.cuda()
+
+        logprobs = compute_logp(
+            policy_model,
+            prompt_response_ids,
+            prompt_response_masks,
+            len(output.prompt_token_ids),
+        )
+
+        logprobs_ref = compute_logp(
+            ref_model,
+            prompt_response_ids,
+            prompt_response_masks,
+            len(output.prompt_token_ids),
+        )
+        implicit_rewards = logprobs - logprobs_ref
+        scores.append(torch.abs(implicit_rewards[0] - implicit_rewards[1]).cpu().item())
+
+    scores = np.array(scores)
+    top_indices = np.argsort(scores)[-num_keep:]
+    prompts = [outputs[i].prompt for i in top_indices]
+    candidates = {
+        i: [outputs[idx].outputs[0].text, outputs[idx].outputs[1].text]
+        for i, idx in enumerate(top_indices)
+    }
+
+    return (
+        prompts,
+        candidates,
+        {
+            "actor/avg_scores": scores.mean(),
+            "actor/selected_scores": scores[top_indices].mean(),
         },
     )
 
