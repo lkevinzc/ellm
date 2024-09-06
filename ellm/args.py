@@ -1,5 +1,4 @@
 import argparse
-import time
 
 from ellm.types import DAPAlgo
 
@@ -201,7 +200,4 @@ def default_args_validation(args):
         assert args.exp_method != "no" and args.exp_pretrain == ""
     if args.learn_rm_only:
         assert args.best_of_n_eval
-    if args.rnd_seed:
-        print("Using randomly generated seed")
-        args.seed = int(time.time() * 1000) % 2**32
     return args

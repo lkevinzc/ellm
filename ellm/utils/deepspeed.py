@@ -1,6 +1,7 @@
 import os
 import random
 import shutil
+import time
 from abc import ABC
 from collections import defaultdict
 from datetime import timedelta
@@ -26,6 +27,9 @@ ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
 
 
 def get_strategy(args):
+    if args.rnd_seed:
+        print("Using randomly generated seed")
+        args.seed = int(time.time() * 1000) % 2**32
     strategy = DeepspeedStrategy(
         seed=getattr(args, "seed", 42),
         max_norm=getattr(args, "max_norm", 1.0),
