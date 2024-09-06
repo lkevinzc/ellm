@@ -6,17 +6,23 @@ get oracle feedback in actor.
 """
 
 import time
+from typing import Dict, List, Tuple
 
 import launchpad as lp
+import Levenshtein
 import numpy as np
 import torch
-import vllm
 from torch.utils.data import DistributedSampler
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer
+from vllm.outputs import RequestOutput
 
 from ellm import actor
 from ellm.learners.dap import DAPLearner
-from ellm.types import PreferenceData
+from ellm.model import LLM
+from ellm.types import Metric, PreferenceData
+from ellm.utils.data import zero_pad_sequences
+from ellm.utils.ipc import DataID, PlasmaShmClient
 
 
 class APLActor(actor.Actor):
@@ -24,34 +30,37 @@ class APLActor(actor.Actor):
 
     def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         super().__init__(ipc_server, vllm_args, sampling_params, args)
-        self.ref_llm = vllm.LLM(**vllm_args)
 
-    def step(
-        self, prompts: torch.List[str], references: torch.List[str] = None
-    ) -> torch.List[actor.PreferenceData]:
+    def generate_and_entropy_filter(self, prompts: List[str]) -> DataID:
         assert not self.eval_mode
-        info = dict()
-
+        # Generate.
         outputs = self.llm.generate(
             prompts, sampling_params=self.sampling_params, use_tqdm=False
         )
-        # 1) Predictive entropy estimation
+        print("generated", len(outputs), len(outputs[0].outputs))
+
+        # Predictive entropy estimation.
         entropy_estimations = []
         for output in outputs:
             entropy = 0
-            for logps in output.prompt_logprobs:
-                entropy -= np.sum([v.logprob for v in logps.values()])
-            entropy = entropy / len(output.prompt_logprobs)
+            for resp_output in output.outputs:
+                entropy += resp_output.cumulative_logprob
+            entropy /= len(output.outputs)
             entropy_estimations.append(entropy)
         ent_filtered_indices = np.argsort(entropy_estimations)[
             -self.args.micro_pi_buffer_maxlen :
-        ]  # online, on-policy
-        prompts = prompts[ent_filtered_indices]
-        outputs = outputs[ent_filtered_indices]
+        ]  # Online and on-policy; as stated in their Appendix D.
+        outputs = [outputs[i] for i in ent_filtered_indices]
 
-        # 2) Implicit reward margin
+        print("filtered", len(outputs), len(outputs[0].outputs))
 
-        # Query reward oracle.
+        handle = self.ipc_client.serialize_ipc(outputs)
+        return handle
+
+    def query_oracle(self, handle: DataID):
+        assert not self.eval_mode
+        info = dict()
+        prompts, candidates = self.ipc_client.deserialize_ipc(handle)
         logits = self.blender.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
@@ -59,7 +68,7 @@ class APLActor(actor.Actor):
             disable_tqdm=True,
         )
         bt_probs = torch.from_numpy(logits).sigmoid()
-        info["actor/first_action_win_prob"] = bt_probs.mean().item()
+
         binary_feedback = logits > 0
         chosen = 1 - binary_feedback
         rejected = 1 - chosen
@@ -85,12 +94,37 @@ class APLActor(actor.Actor):
             for i in range(len(prompts))
         ]
 
-        handle = self.ipc_client.serialize_ipc(preference_data)
+        metric = {
+            "actor/chosen_avg_str_len": np.mean(
+                [len(p.chosen_response) for p in preference_data]
+            ),
+            "actor/rejected_avg_str_len": np.mean(
+                [len(p.rejected_response) for p in preference_data]
+            ),
+            "actor/init_clash_ratio": np.mean([p.init_clash for p in preference_data]),
+            "actor/same_response_ratio": np.mean([p.same for p in preference_data]),
+            "actor/pair_edit_dist": np.mean(
+                [
+                    Levenshtein.distance(p.chosen_response, p.rejected_response)
+                    for p in preference_data
+                ]
+            ),
+            "actor/model_data_ratio": np.mean(
+                [p.is_model_data for p in preference_data]
+            ),
+            "actor/chosen_id": np.mean([p.chosen_id for p in preference_data]),
+            "actor/first_action_win_prob": bt_probs.mean().item(),
+        }
+
+        handle = self.ipc_client.serialize_ipc([preference_data, metric])
         return handle
 
 
 class APLLearner(DAPLearner):
     def run(self):
+        """Overriding the learner run loop for APL."""
+        self.ipc_client = PlasmaShmClient(self.ipc_server)
+
         self._init(self.args, self.actors)
         update_interval = self.args.rollout_batch_size // (
             self.strategy.world_size * self.args.micro_rollout_batch_size
@@ -118,10 +152,43 @@ class APLLearner(DAPLearner):
                 disable=not self.strategy.is_rank_0(),
             )
 
-            for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
-                preference_data, self.actor_info = self.preference_collector(
-                    processed_prompts, refs
+            for processed_prompts, raw_prompts, _ in self.prompts_dataloader:
+                # ###################### #
+                # (BEGIN) Logic for APL  #
+                # ###################### #
+
+                # APL Algo 1, Line 7-8: generate response & filter by entropy.
+                st_time = time.time()
+                rank = torch.distributed.get_rank()
+                actor: APLActor = self.actors[rank % len(self.actors)]
+                handle = actor.generate_and_entropy_filter(processed_prompts)
+                outputs: List[RequestOutput] = self.ipc_client.deserialize_ipc(handle)
+
+                # APL Algo 1, Line 8-9: get implicit reward margin and select pairs.
+                print("len output", len(outputs), len(outputs[0].outputs))
+                prompts, candidates, info = implicit_reward_filtering(
+                    self.model, self.ref_model, self.tokenizer, outputs
                 )
+
+                # APL Algo 1, Line 10: query oracle RM.
+                handle = actor.query_oracle(
+                    self.ipc_client.serialize_ipc([prompts, candidates])
+                )
+                preference_data: List[PreferenceData]
+                preference_data, self.actor_info = self.ipc_client.deserialize_ipc(
+                    handle
+                )
+                self.actor_info.update(
+                    {
+                        "actor/generate_time": time.time() - st_time,
+                        **info,
+                    }
+                )
+
+                # ###################### #
+                #   (END) Logic for APL  #
+                # ###################### #
+
                 self.prompt_consumed += len(preference_data)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
@@ -149,3 +216,97 @@ class APLLearner(DAPLearner):
         if self.strategy.is_rank_0():
             self._wandb.finish()
             lp.stop()
+
+
+def implicit_reward_filtering(
+    policy_model: LLM,
+    ref_model: LLM,
+    tokenizer: PreTrainedTokenizer,
+    outputs: List[RequestOutput],
+) -> Tuple[List[str], Dict[str, List[str]], Metric]:
+    """Select the response pair that gives the largest implicit reward margin."""
+    prompts = []
+    candidates = {}
+
+    avg_margins = []
+    selected_margins = []
+    print("number of outputs", len(outputs))
+    for i, output in enumerate(outputs):
+        # for each prompt
+        prompt_response_ids = [
+            torch.tensor(output.prompt_token_ids + o.token_ids) for o in output.outputs
+        ]
+        prompt_response_masks = [torch.ones_like(ids) for ids in prompt_response_ids]
+
+        prompt_response_ids = zero_pad_sequences(
+            prompt_response_ids, side="right", value=tokenizer.pad_token_id
+        )
+        prompt_response_masks = zero_pad_sequences(prompt_response_masks, side="right")
+
+        prompt_response_ids = prompt_response_ids.cuda()
+        prompt_response_masks = prompt_response_masks.cuda()
+
+        logprobs = compute_logp(
+            policy_model,
+            prompt_response_ids,
+            prompt_response_masks,
+            len(output.prompt_token_ids),
+        )
+
+        logprobs_ref = compute_logp(
+            ref_model,
+            prompt_response_ids,
+            prompt_response_masks,
+            len(output.prompt_token_ids),
+        )
+        # NOTE: the different will be zero until the policy is updated.
+        implicit_rewards = logprobs - logprobs_ref
+
+        M = len(prompt_response_ids)
+        reward_margins = torch.abs(
+            implicit_rewards.view(M, 1) - implicit_rewards.view(1, M)
+        ) - torch.eye(M, device=implicit_rewards.device)
+        avg_margins.append(reward_margins.mean().cpu().item())
+        selected_margins.append(reward_margins.max().cpu().item())
+
+        # print(logprobs, logprobs_ref, implicit_rewards, reward_margins)
+
+        max_idx = reward_margins.argmax()
+        pair_indices = [max_idx // M, max_idx % M]
+        prompts.append(output.prompt)
+        candidates[i] = [output.outputs[j].text for j in pair_indices]
+
+    return (
+        prompts,
+        candidates,
+        {
+            "actor/avg_margins": np.mean(avg_margins),
+            "actor/selected_margins": np.mean(selected_margins),
+        },
+    )
+
+
+@torch.no_grad
+def compute_logp(model, prompt_response_ids, prompt_response_masks, prompt_len: int):
+    model_output = model(prompt_response_ids, attention_mask=prompt_response_masks)
+    all_logits = model_output["logits"]
+
+    loss_masks = prompt_response_masks.clone().bool()
+    prompt_id_lens = [prompt_len] * len(loss_masks)
+    # mask prompts
+    for mask, source_len in zip(loss_masks, prompt_id_lens):
+        mask[:source_len] = False
+    loss_masks = loss_masks[:, 1:]
+
+    labels = prompt_response_ids[:, 1:].clone()
+    # dummy token; we'll ignore the losses on these tokens later
+    labels[loss_masks == False] = 0
+
+    per_token_logps = torch.gather(
+        all_logits[:, :-1, :].log_softmax(-1),
+        dim=2,
+        index=labels.unsqueeze(2),
+    ).squeeze(2)
+
+    logprobs = (per_token_logps * loss_masks).sum(-1)
+    return logprobs

@@ -58,12 +58,12 @@ outputs = [outputs[i] for i in ent_filtered_indices]
 
 
 @torch.no_grad
-def compute_logp(model, prompt_response_ids, prompt_response_masks):
+def compute_logp(model, prompt_response_ids, prompt_response_masks, prompt_len: int):
     model_output = model(prompt_response_ids, attention_mask=prompt_response_masks)
     all_logits = model_output["logits"]
 
     loss_masks = prompt_response_masks.clone().bool()
-    prompt_id_lens = [len(output.prompt_token_ids)] * len(loss_masks)
+    prompt_id_lens = [prompt_len] * len(loss_masks)
     # mask prompts
     for mask, source_len in zip(loss_masks, prompt_id_lens):
         mask[:source_len] = False
@@ -100,7 +100,9 @@ for i, output in enumerate(outputs):
     prompt_response_ids = prompt_response_ids.cuda()
     prompt_response_masks = prompt_response_masks.cuda()
 
-    logprobs = compute_logp(model, prompt_response_ids, prompt_response_masks)
+    logprobs = compute_logp(
+        model, prompt_response_ids, prompt_response_masks, len(output.prompt_token_ids)
+    )
 
     logprobs_ref = torch.randn_like(logprobs)
 
@@ -114,4 +116,5 @@ for i, output in enumerate(outputs):
 
     prompts.append(output.prompt)
     candidates[i] = [output.outputs[j].text for j in pair_indices]
-    pdb.set_trace()
+
+pdb.set_trace()

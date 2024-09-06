@@ -4,6 +4,7 @@ import math
 import os
 import socket
 import time
+from argparse import Namespace
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List
@@ -30,6 +31,7 @@ from ellm.utils.data import (PreferenceDataset, PromptDataset,
 from ellm.utils.distributed import (init_process_group,
                                     node_ip_address_from_perspective,
                                     torch_type_codec)
+from ellm.utils.ipc import PlasmaShmServer
 from ellm.utils.launcher import DistributedLauncher
 from ellm.utils.setup import get_strategy
 
@@ -39,15 +41,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
     def __init__(
         self,
-        world_size,
-        rank,
-        local_rank,
-        master_addr,
-        master_port,
-        is_master,
-        args,
-        actors,
-        ipc_server,
+        world_size: int,
+        rank: int,
+        local_rank: int,
+        master_addr: str,
+        master_port: str,
+        is_master: bool,
+        args: Namespace,
+        actors: List[Actor],
+        ipc_server: PlasmaShmServer,
     ) -> None:
         super().__init__(
             world_size, rank, local_rank, master_addr, master_port, is_master
@@ -56,7 +58,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.actors = actors
         self.ipc_server = ipc_server
 
-    def _init(self, args, actors: List[Actor]) -> None:
+    def _init(self, args: Namespace, actors: List[Actor]) -> None:
         strategy = get_strategy(args)
         strategy.setup_distributed()
 

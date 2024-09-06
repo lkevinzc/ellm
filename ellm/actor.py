@@ -1,5 +1,6 @@
 import time
 from typing import List
+from warnings import warn
 
 import llm_blender
 import numpy as np
@@ -51,9 +52,10 @@ class Actor:
         # ###################################
         self.learning_rm = False
         if args.exp_method == "no":
-            assert (
-                sampling_params.n == 2
-            ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+            if sampling_params.n == 2:
+                warn(
+                    f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+                )
         else:
             assert sampling_params.n > 2
             # We assume reward model-based explorer.

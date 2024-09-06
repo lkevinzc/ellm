@@ -9,6 +9,8 @@ from typing import Any
 import launchpad as lp
 from pyarrow import plasma  # type: ignore
 
+DataID = bytes
+
 
 class PlasmaShmServer:
     def __init__(self, size_mb: int = 5):
@@ -63,13 +65,13 @@ class PlasmaShmClient:
             self._plasma_client = plasma.connect(path)
         return self._plasma_client
 
-    def serialize_ipc(self, data: Any) -> bytes:
+    def serialize_ipc(self, data: Any) -> DataID:
         """Save the data to the plasma server and return the id."""
         client = self._get_client()
         object_id = client.put(pickle.dumps(data))
         return object_id.binary()
 
-    def deserialize_ipc(self, data: bytes) -> Any:
+    def deserialize_ipc(self, data: DataID) -> Any:
         """Get the data from the plasma server and delete it."""
         client = self._get_client()
         object_id = plasma.ObjectID(bytes(data))
