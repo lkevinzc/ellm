@@ -64,7 +64,7 @@ def get_default_parser():
     # Online DAP
     parser.add_argument("--buffer_clear_every", type=int, default=999999999)
     parser.add_argument("--sync_params_every", type=int, default=1)
-    parser.add_argument("--dump_reward_buffer", action="store_true")
+    parser.add_argument("--dump_all_buffer", action="store_true")
     parser.add_argument("--bt_sample", action="store_true")
 
     # Exploration
@@ -123,7 +123,7 @@ def get_default_parser():
     parser.add_argument("--max_ckpt_num", type=int, default=3)
     parser.add_argument("--max_ckpt_mem", type=int, default=1000)  # 1000GB
 
-    parser.add_argument("--num_episodes", type=int, default=1)
+    parser.add_argument("--num_prompt_epoch", type=int, default=1)
     parser.add_argument("--micro_train_batch_size", type=int, default=1)
     parser.add_argument("--train_batch_size", type=int, default=32)
     parser.add_argument("--rollout_batch_size", type=int, default=32)

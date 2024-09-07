@@ -159,7 +159,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             len(prompts_dataset) // args.train_batch_size
         )
         max_steps = math.ceil(
-            args.num_episodes
+            args.num_prompt_epoch
             * num_policy_sgd_steps_per_episodes
             * args.max_step_adjustment
         )
@@ -224,6 +224,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self._wandb,
         )
         self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
+        self.all_buffer = deque(maxlen=int(1e9))
 
         self.strategy = strategy
         self.tokenizer = tokenizer
@@ -299,13 +300,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 {},
             )
 
-        for episode in range(self.args.num_episodes):
+        for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
-                self.prompts_dataloader.sampler.set_epoch(episode)
-                self.strategy.print(f"Set DistributedSampler at epoch {episode}")
+                self.prompts_dataloader.sampler.set_epoch(p_ep)
+                self.strategy.print(f"Set DistributedSampler at epoch {p_ep}")
             progress_bar = tqdm(
                 range(self.prompts_dataloader.__len__()),
-                desc=f"Episode [{episode + 1}/{self.args.num_episodes}]",
+                desc=f"Prompt epoch [{p_ep + 1}/{self.args.num_prompt_epoch}]",
                 disable=not self.strategy.is_rank_0(),
             )
 
@@ -341,15 +342,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 progress_bar.update()
                 steps += 1
 
-        # if self.args.dump_reward_buffer:  # For debug purpose.
-        #     if not self.strategy.is_rank_0():
-        #         dist.gather_object(self.r_buffer)
-        #     else:
-        #         gather_r_buffer = [None] * self.strategy.world_size
-        #         dist.gather_object(self.r_buffer, gather_r_buffer)
-        #         pd.to_pickle(
-        #             gather_r_buffer, os.path.join(self.save_path, "buffer.pkl")
-        #         )
+        if self.args.dump_all_buffer:  # For debug purpose.
+            if not self.strategy.is_rank_0():
+                dist.gather_object(self.all_buffer)
+            else:
+                gather_all_buffer = [None] * self.strategy.world_size
+                dist.gather_object(self.all_buffer, gather_all_buffer)
+                pd.to_pickle(
+                    gather_all_buffer, os.path.join(self.save_path, "all_buffer.pkl")
+                )
 
         if self.strategy.is_rank_0():
             self._wandb.finish()
@@ -360,6 +361,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             # Replace with raw prompts instead of templated ones
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
+            if self.args.dump_all_buffer:
+                self.all_buffer.append(new_pref)
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()

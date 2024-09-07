@@ -142,13 +142,13 @@ class APLLearner(DAPLearner):
                 {},
             )
 
-        for episode in range(self.args.num_episodes):
+        for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
-                self.prompts_dataloader.sampler.set_epoch(episode)
-                self.strategy.print(f"Set DistributedSampler at epoch {episode}")
+                self.prompts_dataloader.sampler.set_epoch(p_ep)
+                self.strategy.print(f"Set DistributedSampler at epoch {p_ep}")
             progress_bar = tqdm(
                 range(self.prompts_dataloader.__len__()),
-                desc=f"Episode [{episode + 1}/{self.args.num_episodes}]",
+                desc=f"Prompt epoch [{p_ep + 1}/{self.args.num_prompt_epoch}]",
                 disable=not self.strategy.is_rank_0(),
             )
 
