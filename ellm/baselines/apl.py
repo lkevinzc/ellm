@@ -1,8 +1,9 @@
 """APL: https://arxiv.org/pdf/2402.08114.
 
 Due to its design of using LLM as the reward model, we have to make the actor-
-learner interface more complicated. We first generate responses and estimate the entropy in actor, then compute the implicit reward margin in learner, and finally
-get oracle feedback in actor. 
+learner interface more complicated. We first generate responses and estimate
+the entropy in actor, then compute the implicit reward margin in learner, and
+finally get oracle feedback in actor.
 """
 
 import time
