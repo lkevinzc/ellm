@@ -65,6 +65,7 @@ def get_default_parser():
     parser.add_argument("--buffer_clear_every", type=int, default=999999999)
     parser.add_argument("--sync_params_every", type=int, default=1)
     parser.add_argument("--dump_reward_buffer", action="store_true")
+    parser.add_argument("--bt_sample", action="store_true")
 
     # Exploration
     parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
@@ -131,6 +132,7 @@ def get_default_parser():
     parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
     parser.add_argument("--r_buffer_maxlen", type=int, default=3200)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
+    parser.add_argument("--max_step_adjustment", type=float, default=1)
 
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
     parser.add_argument("--max_norm", type=float, default=1.0)

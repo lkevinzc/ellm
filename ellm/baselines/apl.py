@@ -157,7 +157,7 @@ class APLLearner(DAPLearner):
                 # (BEGIN) Logic for APL  #
                 # ###################### #
 
-                # APL Algo 1, Line 7-8: generate response & filter by entropy.
+                # APL Algo 1, Line 7-8: generate response & (optionally) filter by entropy.
                 st_time = time.time()
                 rank = torch.distributed.get_rank()
                 actor: APLActor = self.actors[rank % len(self.actors)]
@@ -165,9 +165,10 @@ class APLLearner(DAPLearner):
                 outputs: List[RequestOutput] = self.ipc_client.deserialize_ipc(handle)
 
                 # APL Algo 1, Line 8-9: get implicit reward margin and select pairs.
-                if self.args.apl_pref_certainty_only:
+                output_info1 = f"({len(outputs)},{len(outputs[0].outputs)})"
+                if not self.args.apl_pref_certainty_only:
                     print(
-                        "after entropy filtering", len(outputs), len(outputs[0].outputs)
+                        f"Entropy filtering: {len(processed_prompts)} -> {output_info1}"
                     )
                     # Keep all filtered prompts; select response pair.
                     prompts, candidates, info = implicit_reward_filtering_response_only(
@@ -182,7 +183,8 @@ class APLLearner(DAPLearner):
                         outputs,
                         self.args.micro_pi_buffer_maxlen,
                     )
-
+                output_info2 = f"({len(prompts)},{len(candidates[0])})"
+                print(f"Reward margin filtering: {output_info1} -> {output_info2}")
                 # APL Algo 1, Line 10: query oracle RM.
                 handle = actor.query_oracle(
                     self.ipc_client.serialize_ipc([prompts, candidates])
@@ -202,7 +204,7 @@ class APLLearner(DAPLearner):
                 #   (END) Logic for APL  #
                 # ###################### #
 
-                self.prompt_consumed += len(preference_data)
+                self.prompt_consumed += len(processed_prompts)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
                 )
@@ -312,7 +314,7 @@ def implicit_reward_filtering_triplet(
         prompt_response_ids = [
             torch.tensor(output.prompt_token_ids + o.token_ids) for o in output.outputs
         ]
-        assert len(prompt_response_ids) == 2
+        assert len(prompt_response_ids) == 2, len(prompt_response_ids)
         prompt_response_masks = [torch.ones_like(ids) for ids in prompt_response_ids]
 
         prompt_response_ids = zero_pad_sequences(

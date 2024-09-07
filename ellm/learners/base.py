@@ -59,7 +59,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.ipc_server = ipc_server
 
     def _init(self, args: Namespace, actors: List[Actor]) -> None:
-        strategy = get_strategy(args)
+        args, strategy = get_strategy(args)
         strategy.setup_distributed()
 
         model = LLM(
@@ -158,7 +158,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         num_policy_sgd_steps_per_episodes = int(
             len(prompts_dataset) // args.train_batch_size
         )
-        max_steps = math.ceil(args.num_episodes * num_policy_sgd_steps_per_episodes)
+        max_steps = math.ceil(
+            args.num_episodes
+            * num_policy_sgd_steps_per_episodes
+            * args.max_step_adjustment
+        )
         scheduler = get_scheduler(
             "cosine_with_min_lr",
             optimizer,
@@ -224,6 +228,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.strategy = strategy
         self.tokenizer = tokenizer
         self.prompts_dataloader = prompts_dataloader
+        self.update_interval = args.rollout_batch_size // (
+            strategy.world_size * args.micro_rollout_batch_size
+        )
 
         self.global_step = 0
         self.pi_beta_version = 0
@@ -236,6 +243,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         strategy.print(self.optimizer)
         strategy.print(self.scheduler)
         strategy.pprint(vars(args))
+        strategy.print(f"Update interval = {self.update_interval}")
 
         # prepare parameter syncing to actors (reference to openrlhf)
         #
@@ -278,10 +286,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
     def run(self):
         self._init(self.args, self.actors)
-        update_interval = self.args.rollout_batch_size // (
-            self.strategy.world_size * self.args.micro_rollout_batch_size
-        )
-        self.strategy.print(f"Update interval = {update_interval}")
+
         steps = 1
         self.start_time = time.time()
 
@@ -308,14 +313,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts, refs
                 )
-                self.prompt_consumed += len(preference_data)
+                self.prompt_consumed += len(processed_prompts)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
                 )
                 self.process_preference_data(preference_data, raw_prompts)
 
-                if steps % update_interval == 0:
-                    train_info = self.preference_learning(steps // update_interval)
+                if steps % self.update_interval == 0:
+                    train_info = self.preference_learning(steps // self.update_interval)
 
                     self.save_logs_and_checkpoints(
                         self.args,
@@ -323,10 +328,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         train_info,
                     )
 
-                    if (steps // update_interval) % self.args.sync_params_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.sync_params_every == 0:
                         self.sync_params_to_actors()
 
-                    if (steps // update_interval) % self.args.buffer_clear_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
 
                 progress_bar.update()
@@ -428,6 +437,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "policy_sgd_step": self.policy_sgd_step,
             "pi_buffer_len": len(self.pi_buffer),
             "elapse": time.time() - self.start_time,
+            "update_interval": self.update_interval,
         }
 
     def save_logs_and_checkpoints(self, args, batch_steps, train_info):

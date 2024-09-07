@@ -29,7 +29,7 @@ ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
 def get_strategy(args):
     if args.rnd_seed:
         print("Using randomly generated seed")
-        args.seed = int(time.time() * 1000) % 2**32
+        args.seed = time.time_ns() % 2**32
     strategy = DeepspeedStrategy(
         seed=getattr(args, "seed", 42),
         max_norm=getattr(args, "max_norm", 1.0),
@@ -39,7 +39,7 @@ def get_strategy(args):
         bf16=getattr(args, "bf16", True),
         args=args,
     )
-    return strategy
+    return args, strategy
 
 
 def get_train_ds_config(
