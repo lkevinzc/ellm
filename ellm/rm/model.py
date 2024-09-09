@@ -201,10 +201,12 @@ class EnnDTS(RewardModel):
 
     def __init__(self, args: Namespace) -> None:
         super().__init__()
-        assert args.enn_max_try <= args.num_ensemble // 2
+        assert args.enn_max_try <= args.num_ensemble
 
         self.model = EnsembleModel(
-            encoding_dim=2048,  # Fixed due to PairRM's backbone
+            encoding_dim=getattr(
+                args, "encoding_dim", 2048
+            ),  # Fixed due to PairRM's backbone
             num_ensemble=args.num_ensemble,
             hidden_dim=args.rm_hidden_dim,
             activation=args.rm_act_fn,
@@ -246,20 +248,18 @@ class EnnDTS(RewardModel):
         E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement
-        s1 = list(range(E // 2))
+        s1 = list(range(E))
         random.shuffle(s1)
-        s2 = list(range(E // 2, E))
-        random.shuffle(s2)
         first_actions = best_actions[s1[0]]
         second_actions = torch.ones_like(first_actions) * -1
-        for actions in best_actions[s2[: self.max_resample]]:
+        for actions in best_actions[s1[1 : self.max_resample]]:
             valid_idx = (actions != first_actions) * (second_actions == -1)
             second_actions[valid_idx] = actions[valid_idx]
             if -1 not in second_actions:
                 break
         if self.allow_second_best:
             second_best_actions = rewards.argsort(dim=2)[..., -2, :]
-            for actions in second_best_actions[s2[: self.max_resample]]:
+            for actions in second_best_actions[s1[: self.max_resample]]:
                 valid_idx = (actions != first_actions) * (second_actions == -1)
                 second_actions[valid_idx] = actions[valid_idx]
                 if -1 not in second_actions:
@@ -326,23 +326,20 @@ class EnnTSInfoMax(EnnDTS):
         E, M, _, _ = rewards.shape
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement
-        s1 = list(range(E // 2))
+        s1 = list(range(E))
         random.shuffle(s1)
-        s2 = list(range(E // 2, E))
-        random.shuffle(s2)
         first_actions = best_actions[s1[0]]
         second_actions = torch.ones_like(first_actions) * -1
-        for actions in best_actions[s2[: self.max_resample]]:
+        for actions in best_actions[s1[1 : self.max_resample]]:
             valid_idx = (actions != first_actions) * (second_actions == -1)
             second_actions[valid_idx] = actions[valid_idx]
             if -1 not in second_actions:
                 break
 
         # TODO remove this ugly half-half later because we will not do fg-ts comparison; AND remove fg-ts related codes
-        half_rewards = rewards[s2]
-        pref_logits = half_rewards - einops.rearrange(
-            half_rewards, "e m n 1 -> e m 1 n"
-        )  # (E/2, M, N, N')
+        pref_logits = rewards - einops.rearrange(
+            rewards, "e m n 1 -> e m 1 n"
+        )  # (E, M, N, N')
         pref_uncertainty = pref_logits.std(dim=0)
 
         second_actions_info_max = torch.stack(
