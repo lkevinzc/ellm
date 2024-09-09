@@ -7,7 +7,7 @@ from ellm.types import RewardData
 
 class UniformBuffer(object):
     def __init__(self, max_len: int):
-        self._max_len = max_len
+        self._max_len = int(max_len)
         self._storage = None
         self._n = 0
         self._idx = 0

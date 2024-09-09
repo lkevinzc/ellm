@@ -29,16 +29,13 @@ from ellm.utils.ipc import DataID, PlasmaShmClient
 class APLActor(actor.Actor):
     """Sample a large batch and filter with entropy and reward margin."""
 
-    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
-        super().__init__(ipc_server, vllm_args, sampling_params, args)
-
     def generate_and_entropy_filter(self, prompts: List[str]) -> DataID:
         assert not self.eval_mode
         # Generate.
         outputs = self.llm.generate(
             prompts, sampling_params=self.sampling_params, use_tqdm=False
         )
-        print("generated", len(outputs), len(outputs[0].outputs))
+        print("generated", len(outputs), len(outputs[0].outputs), self.sampling_params)
 
         if not self.args.apl_pref_certainty_only:
             # Predictive entropy estimation.
@@ -70,7 +67,10 @@ class APLActor(actor.Actor):
         )
         bt_probs = torch.from_numpy(logits).sigmoid()
 
-        binary_feedback = logits > 0
+        if self.args.bt_sample:
+            binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
+        else:
+            binary_feedback = logits > 0
         chosen = 1 - binary_feedback
         rejected = 1 - chosen
 
@@ -125,12 +125,8 @@ class APLLearner(DAPLearner):
     def run(self):
         """Overriding the learner run loop for APL."""
         self.ipc_client = PlasmaShmClient(self.ipc_server)
-
         self._init(self.args, self.actors)
-        update_interval = self.args.rollout_batch_size // (
-            self.strategy.world_size * self.args.micro_rollout_batch_size
-        )
-        self.strategy.print(f"Update interval = {update_interval}")
+
         steps = 1
         self.start_time = time.time()
 
@@ -172,23 +168,34 @@ class APLLearner(DAPLearner):
                         f"Entropy filtering: {len(processed_prompts)} -> {output_info1}"
                     )
                     # Keep all filtered prompts; select response pair.
-                    prompts, candidates, info = implicit_reward_filtering_response_only(
-                        self.model, self.ref_model, self.tokenizer, outputs
+                    processed_prompts, raw_prompts, candidates, info = (
+                        implicit_reward_filtering_response_only(
+                            processed_prompts,
+                            raw_prompts,
+                            self.model,
+                            self.ref_model,
+                            self.tokenizer,
+                            outputs,
+                        )
                     )
                 else:
                     # Select the (x, y, y') triplet.
-                    prompts, candidates, info = implicit_reward_filtering_triplet(
-                        self.model,
-                        self.ref_model,
-                        self.tokenizer,
-                        outputs,
-                        self.args.micro_pi_buffer_maxlen,
+                    processed_prompts, raw_prompts, candidates, info = (
+                        implicit_reward_filtering_triplet(
+                            processed_prompts,
+                            raw_prompts,
+                            self.model,
+                            self.ref_model,
+                            self.tokenizer,
+                            outputs,
+                            self.args.micro_pi_buffer_maxlen,
+                        )
                     )
-                output_info2 = f"({len(prompts)},{len(candidates[0])})"
+                output_info2 = f"({len(processed_prompts)},{len(candidates[0])})"
                 print(f"Reward margin filtering: {output_info1} -> {output_info2}")
                 # APL Algo 1, Line 10: query oracle RM.
                 handle = actor.query_oracle(
-                    self.ipc_client.serialize_ipc([prompts, candidates])
+                    self.ipc_client.serialize_ipc([processed_prompts, candidates])
                 )
                 preference_data: List[PreferenceData]
                 preference_data, self.actor_info = self.ipc_client.deserialize_ipc(
@@ -211,8 +218,8 @@ class APLLearner(DAPLearner):
                 )
                 self.process_preference_data(preference_data, raw_prompts)
 
-                if steps % update_interval == 0:
-                    train_info = self.preference_learning(steps // update_interval)
+                if steps % self.update_interval == 0:
+                    train_info = self.preference_learning(steps // self.update_interval)
 
                     self.save_logs_and_checkpoints(
                         self.args,
@@ -220,10 +227,14 @@ class APLLearner(DAPLearner):
                         train_info,
                     )
 
-                    if (steps // update_interval) % self.args.sync_params_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.sync_params_every == 0:
                         self.sync_params_to_actors()
 
-                    if (steps // update_interval) % self.args.buffer_clear_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
 
                 progress_bar.update()
@@ -235,13 +246,14 @@ class APLLearner(DAPLearner):
 
 
 def implicit_reward_filtering_response_only(
+    processed_prompts: List[str],
+    raw_prompts: List[str],
     policy_model: LLM,
     ref_model: LLM,
     tokenizer: PreTrainedTokenizer,
     outputs: List[RequestOutput],
 ) -> Tuple[List[str], Dict[str, List[str]], Metric]:
     """Select the response pair that gives the largest implicit reward margin."""
-    prompts = []
     candidates = {}
 
     avg_margins = []
@@ -284,14 +296,14 @@ def implicit_reward_filtering_response_only(
 
         max_idx = reward_margins.argmax()
         pair_indices = [max_idx // M, max_idx % M]
-        prompts.append(output.prompt)
         candidates[i] = [output.outputs[j].text for j in pair_indices]
 
         avg_margins.append(reward_margins.mean().cpu().item())
         selected_margins.append(reward_margins.max().cpu().item())
 
     return (
-        prompts,
+        processed_prompts,
+        raw_prompts,
         candidates,
         {
             "actor/avg_margins": np.mean(avg_margins),
@@ -301,6 +313,8 @@ def implicit_reward_filtering_response_only(
 
 
 def implicit_reward_filtering_triplet(
+    processed_prompts: List[str],
+    raw_prompts: List[str],
     policy_model: LLM,
     ref_model: LLM,
     tokenizer: PreTrainedTokenizer,
@@ -343,20 +357,25 @@ def implicit_reward_filtering_triplet(
         scores.append(torch.abs(implicit_rewards[0] - implicit_rewards[1]).cpu().item())
 
     scores = np.array(scores)
-    top_indices = np.argsort(scores)[-num_keep:]
-    prompts = [outputs[i].prompt for i in top_indices]
+    top_indices = np.argsort(scores)[-num_keep:].tolist()
+    # random.shuffle(top_indices)
+    print(top_indices)
+    processed_prompts = [processed_prompts[idx] for idx in top_indices]
+    raw_prompts = [raw_prompts[idx] for idx in top_indices]
     candidates = {
-        i: [outputs[idx].outputs[0].text, outputs[idx].outputs[1].text]
+        i: [outputs[idx].outputs[0].text.strip(), outputs[idx].outputs[1].text.strip()]
         for i, idx in enumerate(top_indices)
+    }
+    info = {
+        "actor/avg_scores": scores.mean(),
+        "actor/selected_scores": scores[top_indices].mean(),
     }
 
     return (
-        prompts,
+        processed_prompts,
+        raw_prompts,
         candidates,
-        {
-            "actor/avg_scores": scores.mean(),
-            "actor/selected_scores": scores[top_indices].mean(),
-        },
+        info,
     )
 
 
@@ -364,23 +383,41 @@ def implicit_reward_filtering_triplet(
 def compute_logp(model, prompt_response_ids, prompt_response_masks, prompt_len: int):
     model_output = model(prompt_response_ids, attention_mask=prompt_response_masks)
     all_logits = model_output["logits"]
+    prompt_id_lens = [prompt_len] * len(prompt_response_masks)
+    return get_batch_logps(
+        all_logits,
+        prompt_response_ids,
+        prompt_response_masks,
+        prompt_id_lens,
+        average_log_prob=False,
+    )
 
-    loss_masks = prompt_response_masks.clone().bool()
-    prompt_id_lens = [prompt_len] * len(loss_masks)
+
+def get_batch_logps(
+    logits: torch.FloatTensor,
+    labels: torch.LongTensor,
+    attention_mask,
+    prompt_id_lens,
+    average_log_prob: bool = False,
+) -> torch.FloatTensor:
+    assert logits.shape[:-1] == labels.shape
+
+    labels = labels[:, 1:].clone()
+    logits = logits[:, :-1, :]
+
+    loss_masks = attention_mask.clone().bool()
     # mask prompts
     for mask, source_len in zip(loss_masks, prompt_id_lens):
         mask[:source_len] = False
     loss_masks = loss_masks[:, 1:]
 
-    labels = prompt_response_ids[:, 1:].clone()
     # dummy token; we'll ignore the losses on these tokens later
     labels[loss_masks == False] = 0
-
     per_token_logps = torch.gather(
-        all_logits[:, :-1, :].log_softmax(-1),
-        dim=2,
-        index=labels.unsqueeze(2),
+        logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)
     ).squeeze(2)
 
-    logprobs = (per_token_logps * loss_masks).sum(-1)
-    return logprobs
+    if average_log_prob:
+        return (per_token_logps * loss_masks).sum(-1) / loss_masks.sum(-1)
+    else:
+        return (per_token_logps * loss_masks).sum(-1)
