@@ -1,4 +1,4 @@
-"""XPO: https://arxiv.org/pdf/2405.21046"""
+"""XPO: https://arxiv.org/pdf/2405.21046."""
 
 import torch
 import vllm

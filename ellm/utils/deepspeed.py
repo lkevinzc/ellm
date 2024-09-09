@@ -1,6 +1,7 @@
 import os
 import random
 import shutil
+import time
 from abc import ABC
 from collections import defaultdict
 from datetime import timedelta
@@ -23,6 +24,22 @@ from ellm.model import LLM
 
 ModelOptimPair = Tuple[nn.Module, Optimizer]
 ModelOrModelOptimPair = Union[nn.Module, ModelOptimPair]
+
+
+def get_strategy(args):
+    if args.rnd_seed:
+        print("Using randomly generated seed")
+        args.seed = time.time_ns() % 2**32
+    strategy = DeepspeedStrategy(
+        seed=getattr(args, "seed", 42),
+        max_norm=getattr(args, "max_norm", 1.0),
+        micro_train_batch_size=getattr(args, "micro_train_batch_size", 1),
+        train_batch_size=getattr(args, "train_batch_size", 128),
+        zero_stage=args.zero_stage,
+        bf16=getattr(args, "bf16", True),
+        args=args,
+    )
+    return args, strategy
 
 
 def get_train_ds_config(

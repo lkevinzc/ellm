@@ -10,6 +10,7 @@ from ellm.rm.networks import EnsembleModel
 
 
 def main(
+    feature_path: str = "processed_features_for_rm.pt",
     encoding_dim=2048,
     hidden_dim=128,
     num_ensemble=3,
@@ -20,7 +21,7 @@ def main(
     activation="relu",
     track=False,
 ):
-    data = pd.read_pickle("processed_features_for_rm.pt")
+    data = pd.read_pickle(feature_path)
     train_data = data[:-1000]
     test_data = data[-1000:]
 

@@ -163,7 +163,7 @@ def pad_to_length(tensor, length, pad_value, dim=-1):
         )
 
 
-def _zero_pad_sequences(sequences, side: str = "left", value=0):
+def zero_pad_sequences(sequences, side: str = "left", value=0):
     assert side in ("left", "right")
     max_len = max(seq.size(-1) for seq in sequences)
     padded_sequences = []
@@ -401,12 +401,12 @@ class PreferenceDataset(Dataset):
             extras["chosen_ids"].append(extra["chosen_ids"])
 
         padding_side = "right"
-        chosen_ids = _zero_pad_sequences(
+        chosen_ids = zero_pad_sequences(
             chosen_ids, side=padding_side, value=self.tokenizer.pad_token_id
         )
-        chosen_masks = _zero_pad_sequences(chosen_masks, side=padding_side)
-        rejected_ids = _zero_pad_sequences(
+        chosen_masks = zero_pad_sequences(chosen_masks, side=padding_side)
+        rejected_ids = zero_pad_sequences(
             rejected_ids, side=padding_side, value=self.tokenizer.pad_token_id
         )
-        rejected_masks = _zero_pad_sequences(rejected_masks, side=padding_side)
+        rejected_masks = zero_pad_sequences(rejected_masks, side=padding_side)
         return chosen_ids, chosen_masks, rejected_ids, rejected_masks, extras

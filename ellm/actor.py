@@ -1,5 +1,6 @@
 import time
 from typing import List
+from warnings import warn
 
 import llm_blender
 import numpy as np
@@ -7,8 +8,7 @@ import torch
 import vllm
 
 from ellm.exploration import ExplorationResults, Explorer
-from ellm.rm import model
-from ellm.rm.backbone import DebertaV2PairRM, DebertaV2Vanilla
+from ellm.rm import backbone, model
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
 from ellm.utils.ipc import PlasmaShmClient
@@ -35,7 +35,7 @@ class Actor:
         assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
 
         vllm.worker.worker.Worker = WorkerWrap
-        vllm_args.update({"seed": int(time.time() * 1000) % 2**32})
+        vllm_args.update({"seed": time.time_ns() % 2**32})
         self.llm = vllm.LLM(**vllm_args)
         self.sampling_params: vllm.SamplingParams = sampling_params
         self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
@@ -51,20 +51,18 @@ class Actor:
         # ###################################
         self.learning_rm = False
         if args.exp_method == "no":
-            assert (
-                sampling_params.n == 2
-            ), f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+            if sampling_params.n == 2:
+                warn(
+                    f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+                )
         else:
             assert sampling_params.n > 2
             # We assume reward model-based explorer.
-            print("Using RM backbone", args.rm_backbone)
-            if args.rm_backbone == "llm-blender/PairRM-hf":
-                cls = DebertaV2PairRM
-            else:
-                cls = DebertaV2Vanilla
+            rm_backbone_cls = backbone.get_cls(args.rm_backbone)
+            print("Using RM backbone", args.rm_backbone, rm_backbone_cls)
             self.explorer = Explorer(
                 reward_model=getattr(model, args.exp_method)(args).cuda(),
-                rm_backbone=cls.from_pretrained(
+                rm_backbone=rm_backbone_cls.from_pretrained(
                     args.rm_backbone, device_map="cuda:0"
                 ).eval(),
                 args=args,
@@ -198,7 +196,10 @@ class Actor:
         bt_probs = torch.from_numpy(logits).sigmoid()
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
 
-        binary_feedback = logits > 0
+        if self.args.bt_sample:
+            binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
+        else:
+            binary_feedback = logits > 0
         chosen = 1 - binary_feedback
         if self.model_rollout:
             # Record metric and overwrite label.

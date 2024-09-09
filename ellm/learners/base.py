@@ -4,6 +4,7 @@ import math
 import os
 import socket
 import time
+from argparse import Namespace
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List
@@ -27,11 +28,12 @@ from ellm.preference import PreferenceCollector
 from ellm.types import DAPAlgo, PreferenceData
 from ellm.utils.data import (PreferenceDataset, PromptDataset,
                              blending_datasets, get_tokenizer)
+from ellm.utils.deepspeed import get_strategy
 from ellm.utils.distributed import (init_process_group,
                                     node_ip_address_from_perspective,
                                     torch_type_codec)
+from ellm.utils.ipc import PlasmaShmServer
 from ellm.utils.launcher import DistributedLauncher
-from ellm.utils.setup import get_strategy
 
 
 class LearnerBase(abc.ABC, DistributedLauncher):
@@ -39,15 +41,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
     def __init__(
         self,
-        world_size,
-        rank,
-        local_rank,
-        master_addr,
-        master_port,
-        is_master,
-        args,
-        actors,
-        ipc_server,
+        world_size: int,
+        rank: int,
+        local_rank: int,
+        master_addr: str,
+        master_port: str,
+        is_master: bool,
+        args: Namespace,
+        actors: List[Actor],
+        ipc_server: PlasmaShmServer,
     ) -> None:
         super().__init__(
             world_size, rank, local_rank, master_addr, master_port, is_master
@@ -56,8 +58,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.actors = actors
         self.ipc_server = ipc_server
 
-    def _init(self, args, actors: List[Actor]) -> None:
-        strategy = get_strategy(args)
+    def _init(self, args: Namespace, actors: List[Actor]) -> None:
+        args, strategy = get_strategy(args)
         strategy.setup_distributed()
 
         model = LLM(
@@ -156,7 +158,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         num_policy_sgd_steps_per_episodes = int(
             len(prompts_dataset) // args.train_batch_size
         )
-        max_steps = math.ceil(args.num_episodes * num_policy_sgd_steps_per_episodes)
+        max_steps = math.ceil(
+            args.num_prompt_epoch
+            * num_policy_sgd_steps_per_episodes
+            * args.max_step_adjustment
+        )
         scheduler = get_scheduler(
             "cosine_with_min_lr",
             optimizer,
@@ -218,10 +224,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self._wandb,
         )
         self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
+        self.all_buffer = deque(maxlen=int(1e9))
 
         self.strategy = strategy
         self.tokenizer = tokenizer
         self.prompts_dataloader = prompts_dataloader
+        self.update_interval = args.rollout_batch_size // (
+            strategy.world_size * args.micro_rollout_batch_size
+        )
 
         self.global_step = 0
         self.pi_beta_version = 0
@@ -234,6 +244,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         strategy.print(self.optimizer)
         strategy.print(self.scheduler)
         strategy.pprint(vars(args))
+        strategy.print(f"Update interval = {self.update_interval}")
 
         # prepare parameter syncing to actors (reference to openrlhf)
         #
@@ -276,10 +287,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
     def run(self):
         self._init(self.args, self.actors)
-        update_interval = self.args.rollout_batch_size // (
-            self.strategy.world_size * self.args.micro_rollout_batch_size
-        )
-        self.strategy.print(f"Update interval = {update_interval}")
+
         steps = 1
         self.start_time = time.time()
 
@@ -292,13 +300,13 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 {},
             )
 
-        for episode in range(self.args.num_episodes):
+        for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
-                self.prompts_dataloader.sampler.set_epoch(episode)
-                self.strategy.print(f"Set DistributedSampler at epoch {episode}")
+                self.prompts_dataloader.sampler.set_epoch(p_ep)
+                self.strategy.print(f"Set DistributedSampler at epoch {p_ep}")
             progress_bar = tqdm(
                 range(self.prompts_dataloader.__len__()),
-                desc=f"Episode [{episode + 1}/{self.args.num_episodes}]",
+                desc=f"Prompt epoch [{p_ep + 1}/{self.args.num_prompt_epoch}]",
                 disable=not self.strategy.is_rank_0(),
             )
 
@@ -306,14 +314,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts, refs
                 )
-                self.prompt_consumed += len(preference_data)
+                self.prompt_consumed += len(processed_prompts)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
                 )
                 self.process_preference_data(preference_data, raw_prompts)
 
-                if steps % update_interval == 0:
-                    train_info = self.preference_learning(steps // update_interval)
+                if steps % self.update_interval == 0:
+                    train_info = self.preference_learning(steps // self.update_interval)
 
                     self.save_logs_and_checkpoints(
                         self.args,
@@ -321,24 +329,28 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         train_info,
                     )
 
-                    if (steps // update_interval) % self.args.sync_params_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.sync_params_every == 0:
                         self.sync_params_to_actors()
 
-                    if (steps // update_interval) % self.args.buffer_clear_every == 0:
+                    if (
+                        steps // self.update_interval
+                    ) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
 
                 progress_bar.update()
                 steps += 1
 
-        # if self.args.dump_reward_buffer:  # For debug purpose.
-        #     if not self.strategy.is_rank_0():
-        #         dist.gather_object(self.r_buffer)
-        #     else:
-        #         gather_r_buffer = [None] * self.strategy.world_size
-        #         dist.gather_object(self.r_buffer, gather_r_buffer)
-        #         pd.to_pickle(
-        #             gather_r_buffer, os.path.join(self.save_path, "buffer.pkl")
-        #         )
+        if self.args.dump_all_buffer:  # For debug purpose.
+            if not self.strategy.is_rank_0():
+                dist.gather_object(self.all_buffer)
+            else:
+                gather_all_buffer = [None] * self.strategy.world_size
+                dist.gather_object(self.all_buffer, gather_all_buffer)
+                pd.to_pickle(
+                    gather_all_buffer, os.path.join(self.save_path, "all_buffer.pkl")
+                )
 
         if self.strategy.is_rank_0():
             self._wandb.finish()
@@ -349,6 +361,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             # Replace with raw prompts instead of templated ones
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
+            if self.args.dump_all_buffer:
+                self.all_buffer.append(new_pref)
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()
@@ -426,6 +440,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "policy_sgd_step": self.policy_sgd_step,
             "pi_buffer_len": len(self.pi_buffer),
             "elapse": time.time() - self.start_time,
+            "update_interval": self.update_interval,
         }
 
     def save_logs_and_checkpoints(self, args, batch_steps, train_info):

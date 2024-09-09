@@ -9,6 +9,14 @@ from transformers.models.deberta_v2.modeling_deberta_v2 import (
     DebertaV2Model, DebertaV2PreTrainedModel, SequenceClassifierOutput)
 
 
+def get_cls(model_name: str):
+    if "pairrm" in model_name.lower():
+        return DebertaV2PairRM
+    if "deberta" in model_name.lower():
+        return DebertaV2Vanilla
+    return PythiaPretrained
+
+
 class RMBackbone(abc.ABC):
 
     def tokenize_pair(
@@ -44,12 +52,17 @@ class RMBackbone(abc.ABC):
         attention_mask: Optional[torch.Tensor] = None,
     ):
         #  <source_prefix_id>...<sep><cand_prefix_id>...<sep>
-        assert all(
-            [self.source_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
-        ), "<source> id not in input_ids"
-        assert all(
-            [self.cand_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
-        ), "<candidate> id not in input_ids"
+        if self.source_prefix_id is not None:
+            assert all(
+                [
+                    self.source_prefix_id in input_ids[i]
+                    for i in range(input_ids.shape[0])
+                ]
+            ), "<source> id not in input_ids"
+        if self.cand_prefix_id is not None:
+            assert all(
+                [self.cand_prefix_id in input_ids[i] for i in range(input_ids.shape[0])]
+            ), "<candidate> id not in input_ids"
 
         keep_column_mask = attention_mask.ne(0).any(dim=0)
         input_ids = input_ids[:, keep_column_mask]
@@ -87,7 +100,76 @@ class RMBackbone(abc.ABC):
         return self.postprocess(outputs, input_ids)
 
 
-class DebertaV2Vanilla(RMBackbone, nn.Module):
+class CustomBackbone(RMBackbone):
+    @classmethod
+    def from_pretrained(cls, model_name, device_map):
+        inst = cls(model_name).to(device_map)
+        return inst
+
+    @property
+    def device(self):
+        return self.pretrained_model.device
+
+
+class PythiaPretrained(CustomBackbone, nn.Module):
+    def __init__(self, model_name: str) -> None:
+        super().__init__()
+        self.pretrained_model = AutoModel.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.config = self.pretrained_model.config
+        self.source_prefix_id = None
+        self.cand_prefix_id = None
+
+        self.eval()
+
+    def tokenize_pair(
+        self, prompt: str, candidate: str, source_max_length: int, max_length: int
+    ):
+        del source_max_length
+        tokens = self.tokenizer.encode(
+            prompt + candidate,
+            max_length=max_length,
+            truncation=True,
+            add_special_tokens=False,
+        )
+        return tokens
+
+    @torch.no_grad
+    def get_feature(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        output_attentions: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, SequenceClassifierOutput]:
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+        input_ids, attention_mask = self.preprocess(input_ids, attention_mask)
+
+        outputs = self.pretrained_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+            return_dict=return_dict,
+            position_ids=position_ids,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+        )
+
+        return self.postprocess(outputs, attention_mask)
+
+    def postprocess(self, outputs, attention_mask: torch.Tensor):
+        encs = outputs.hidden_states[-1]
+        last_pos = attention_mask.sum(-1).long() - 1
+        batch_idx = torch.arange(len(encs), device=encs.device)
+        return encs[batch_idx, last_pos, :].detach()
+
+
+class DebertaV2Vanilla(CustomBackbone, nn.Module):
     def __init__(self, model_name: str):
         super().__init__()
         self.pretrained_model = AutoModel.from_pretrained(model_name)
@@ -99,15 +181,6 @@ class DebertaV2Vanilla(RMBackbone, nn.Module):
         self.cand_prefix = "[SEP]"
 
         self.eval()
-
-    @classmethod
-    def from_pretrained(cls, model_name, device_map):
-        inst = cls(model_name).to(device_map)
-        return inst
-
-    @property
-    def device(self):
-        return self.pretrained_model.device
 
     def tokenize_pair(
         self, prompt: str, candidate: str, source_max_length: int, max_length: int
