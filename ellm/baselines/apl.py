@@ -149,7 +149,7 @@ class APLLearner(DAPLearner):
                 disable=not self.strategy.is_rank_0(),
             )
 
-            for processed_prompts, raw_prompts, _ in self.prompts_dataloader:
+            for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
                 # ###################### #
                 # (BEGIN) Logic for APL  #
                 # ###################### #
@@ -212,7 +212,7 @@ class APLLearner(DAPLearner):
                 #   (END) Logic for APL  #
                 # ###################### #
 
-                self.prompt_consumed += len(processed_prompts)
+                self.prompt_consumed += len(refs)
                 self.query_step += np.sum(
                     [not p.is_model_data for p in preference_data]
                 )

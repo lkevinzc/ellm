@@ -238,6 +238,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.policy_sgd_step = 0
         self.query_step = 0
         self.prompt_consumed = 0
+        self.prompt_epoch = 0
 
         # Log summary of the learner
         strategy.print(self.model)
@@ -342,6 +343,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 progress_bar.update()
                 steps += 1
 
+            self.prompt_epoch = p_ep + 1
+
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():
                 dist.gather_object(self.all_buffer)
@@ -441,6 +444,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "pi_buffer_len": len(self.pi_buffer),
             "elapse": time.time() - self.start_time,
             "update_interval": self.update_interval,
+            "prompt_epoch": self.prompt_epoch,
         }
 
     def save_logs_and_checkpoints(self, args, batch_steps, train_info):

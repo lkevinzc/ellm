@@ -212,7 +212,9 @@ class EnnDTS(RewardModel):
             activation=args.rm_act_fn,
         )
         self.model.init()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=args.rm_lr)
+        self.optimizer = optim.Adam(
+            self.model.parameters(), lr=args.rm_lr, weight_decay=args.rm_wd
+        )
         self.reg_lambda = args.enn_lambda
         self.max_resample = args.enn_max_try
         self.allow_second_best = args.exp_allow_second_best
@@ -273,6 +275,8 @@ class EnnDTS(RewardModel):
         total_num_queries = buffer.total_num_queries
         for _ in range(self.sgd_steps):
             batch = buffer.sample(self.train_bs)
+            if batch is None:
+                return self.get_metrics()
             pair_feats = batch.pair_features.view(2 * self.train_bs, -1)
             batch_inp = pair_feats[None, :, :].repeat([self.model.num_ensemble, 1, 1])
             scores = self.model(batch_inp)
