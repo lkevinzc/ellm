@@ -52,7 +52,7 @@ class APLActor(actor.Actor):
             outputs = [outputs[i] for i in ent_filtered_indices]
             print("filtered", len(outputs), len(outputs[0].outputs))
 
-        handle = self.ipc_client.serialize_ipc(outputs)
+        handle = self.ipc_client.serialize_ipc([outputs, ent_filtered_indices])
         return handle
 
     def query_oracle(self, handle: DataID):
@@ -159,7 +159,8 @@ class APLLearner(DAPLearner):
                 rank = torch.distributed.get_rank()
                 actor: APLActor = self.actors[rank % len(self.actors)]
                 handle = actor.generate_and_entropy_filter(processed_prompts)
-                outputs: List[RequestOutput] = self.ipc_client.deserialize_ipc(handle)
+                outputs: List[RequestOutput]
+                outputs, ent_filtered_indices = self.ipc_client.deserialize_ipc(handle)
 
                 # APL Algo 1, Line 8-9: get implicit reward margin and select pairs.
                 output_info1 = f"({len(outputs)},{len(outputs[0].outputs)})"
@@ -168,15 +169,18 @@ class APLLearner(DAPLearner):
                         f"Entropy filtering: {len(processed_prompts)} -> {output_info1}"
                     )
                     # Keep all filtered prompts; select response pair.
-                    processed_prompts, raw_prompts, candidates, info = (
-                        implicit_reward_filtering_response_only(
-                            processed_prompts,
-                            raw_prompts,
-                            self.model,
-                            self.ref_model,
-                            self.tokenizer,
-                            outputs,
-                        )
+                    processed_prompts = [output.prompt for output in outputs]
+                    processed_prompts = [
+                        processed_prompts[i] for i in ent_filtered_indices
+                    ]
+                    raw_prompts = [raw_prompts[i] for i in ent_filtered_indices]
+                    candidates, info = implicit_reward_filtering_response_only(
+                        processed_prompts,
+                        raw_prompts,
+                        self.model,
+                        self.ref_model,
+                        self.tokenizer,
+                        outputs,
                     )
                 else:
                     # Select the (x, y, y') triplet.
@@ -246,8 +250,6 @@ class APLLearner(DAPLearner):
 
 
 def implicit_reward_filtering_response_only(
-    processed_prompts: List[str],
-    raw_prompts: List[str],
     policy_model: LLM,
     ref_model: LLM,
     tokenizer: PreTrainedTokenizer,
@@ -302,8 +304,6 @@ def implicit_reward_filtering_response_only(
         selected_margins.append(reward_margins.max().cpu().item())
 
     return (
-        processed_prompts,
-        raw_prompts,
         candidates,
         {
             "actor/avg_margins": np.mean(avg_margins),
