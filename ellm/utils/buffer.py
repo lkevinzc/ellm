@@ -36,6 +36,10 @@ class UniformBuffer(object):
         all_indices = (start_indices + base_idx) % self._max_len
         return tree.map_structure(lambda a: a[all_indices], self._storage)
 
+    def get_all(self) -> RewardData:
+        all_indices = np.arange(self.size)
+        return tree.map_structure(lambda a: a[all_indices], self._storage)
+
     @property
     def size(self):
         return self._n

@@ -85,6 +85,7 @@ def get_default_parser():
     parser.add_argument("--exp_allow_second_best", action="store_true")
 
     parser.add_argument("--rm_lr", type=float, default=1e-3)
+    parser.add_argument("--rm_wd", type=float, default=5e-5)
     parser.add_argument("--rm_hidden_dim", type=int, default=128)
     parser.add_argument("--rm_act_fn", type=str, default="relu")
 

@@ -58,7 +58,7 @@ class MLPModel(nn.Module):
             params.append(pp.view(-1))
         return torch.cat(params)
 
-    def forward(self, encoding):
+    def forward(self, encoding: torch.Tensor) -> torch.Tensor:
         x = self.activation(self.nn1(encoding))
         x = self.activation(self.nn2(x))
         score = self.nn_out(x)
@@ -71,7 +71,7 @@ class MLPModel(nn.Module):
 
     def regularization(self):
         """Prior towards independent initialization."""
-        return ((self.get_params() - self.init_params) ** 2).sum()
+        return ((self.get_params() - self.init_params) ** 2).mean()
 
 
 class EnsembleFC(nn.Module):
@@ -123,4 +123,4 @@ class EnsembleModel(MLPModel):
 
     def regularization(self):
         """Prior towards independent initialization."""
-        return ((self.get_params() - self.init_params) ** 2).sum()
+        return ((self.get_params() - self.init_params) ** 2).mean()
