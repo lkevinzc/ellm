@@ -410,3 +410,72 @@ class PreferenceDataset(Dataset):
         )
         rejected_masks = zero_pad_sequences(rejected_masks, side=padding_side)
         return chosen_ids, chosen_masks, rejected_ids, rejected_masks, extras
+
+
+class RankDataset(Dataset):
+    def __init__(
+        self,
+        inputs: List[str],
+        candidates_A: List[str],
+        candidates_B: List[str],
+        tokenizer: Callable,
+        prompt_max_length: int,
+        completion_max_length: int,
+    ) -> None:
+        super().__init__()
+        self.inputs = inputs
+        self.candidates_A = candidates_A
+        self.candidates_B = candidates_B
+        self.tokenizer = tokenizer
+        self.prompt_max_length = prompt_max_length
+        self.completion_max_length = completion_max_length
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, index):
+        prompt, completion1, completion2 = (
+            self.inputs[index],
+            self.candidates_A[index],
+            self.candidates_B[index],
+        )
+        prompt_tokens = self.tokenizer(
+            prompt,
+            max_length=self.prompt_max_length,
+            padding=False,
+            truncation=True,
+            return_tensors="pt",
+        )
+        completion1_tokens = self.tokenizer(
+            completion1.rstrip("\n"),
+            max_length=self.completion_max_length,
+            padding=False,
+            truncation=True,
+            return_tensors="pt",
+        )
+        completion2_tokens = self.tokenizer(
+            completion2.rstrip("\n"),
+            max_length=self.completion_max_length,
+            padding=False,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        return (prompt_tokens, completion1_tokens, completion2_tokens)
+
+    def collate_fn(self, item_list):
+        prompt_ids = []
+        comp1_ids = []
+        comp2_ids = []
+        for prompt_tokens, completion1_tokens, completion2_tokens in item_list:
+            prompt_ids.append(prompt_tokens["input_ids"])
+            comp1_ids.append(completion1_tokens["input_ids"])
+            comp2_ids.append(completion2_tokens["input_ids"])
+
+        prompt_ids = zero_pad_sequences(
+            prompt_ids, side="left", value=self.tokenizer.pad_token_id
+        )
+        completion_ids = zero_pad_sequences(
+            comp1_ids + comp2_ids, side="right", value=self.tokenizer.pad_token_id
+        )
+        return prompt_ids, completion_ids

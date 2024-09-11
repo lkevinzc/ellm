@@ -59,7 +59,7 @@ class APLActor(actor.Actor):
         assert not self.eval_mode
         info = dict()
         prompts, candidates = self.ipc_client.deserialize_ipc(handle)
-        logits = self.blender.compare(
+        logits = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
