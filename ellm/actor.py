@@ -2,11 +2,11 @@ import time
 from typing import List
 from warnings import warn
 
-import llm_blender
 import numpy as np
 import torch
 import vllm
 
+from ellm import oracles
 from ellm.exploration import ExplorationResults, Explorer
 from ellm.rm import backbone, model
 from ellm.types import PreferenceData
@@ -43,8 +43,12 @@ class Actor:
         # ###################################
         # ####    Oracle Reward Model    ####
         # ###################################
-        self.blender = llm_blender.Blender()
-        self.blender.loadranker("llm-blender/PairRM")
+        oracle_cls = oracles.get_cls(args.reward_oracle)
+        print("Using reward oracle", args.reward_oracle, oracle_cls)
+        self.oracle = oracle_cls(
+            reward_model_path=args.reward_oracle,
+            tokenizer_path=args.pretrain,
+        )
 
         # ###################################
         # ####        Exploration        ####
@@ -122,7 +126,8 @@ class Actor:
             responses = [candidates[i][0] for i in range(len(prompts))]
 
         if references:
-            win_logits = self.blender.compare(
+            print("Evaluating using oracle", self.oracle)
+            win_logits = self.oracle.compare(
                 prompts, responses, references, return_logits=True, disable_tqdm=True
             )
             win_probs = torch.from_numpy(win_logits).sigmoid().numpy()
@@ -130,7 +135,7 @@ class Actor:
         return responses, None
 
     def online_eval(self, prompts, references, candidates):
-        win_logits_1 = self.blender.compare(
+        win_logits_1 = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             references,
@@ -138,7 +143,7 @@ class Actor:
             disable_tqdm=True,
         )
         win_probs_1 = torch.from_numpy(win_logits_1).sigmoid().numpy()
-        win_logits_2 = self.blender.compare(
+        win_logits_2 = self.oracle.compare(
             prompts,
             [candidates[i][1] for i in range(len(prompts))],
             references,
@@ -187,7 +192,7 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
-        logits = self.blender.compare(
+        logits = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],

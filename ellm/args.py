@@ -62,6 +62,7 @@ def get_default_parser():
     )
 
     # Online DAP
+    parser.add_argument("--reward_oracle", type=str, default="pairrm")
     parser.add_argument("--buffer_clear_every", type=int, default=999999999)
     parser.add_argument("--sync_params_every", type=int, default=1)
     parser.add_argument("--dump_all_buffer", action="store_true")
@@ -94,7 +95,7 @@ def get_default_parser():
 
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
-    parser.add_argument("--enn_max_try", type=int, default=10)
+    parser.add_argument("--enn_max_try", type=int, default=-1)
     parser.add_argument("--enn_lambda", type=float, default=0.1)
 
     ## LmcFGTS
@@ -203,4 +204,6 @@ def default_args_validation(args):
         assert args.exp_method != "no" and args.exp_pretrain == ""
     if args.learn_rm_only:
         assert args.best_of_n_eval
+    if args.enn_max_try == -1:
+        args.enn_max_try = args.num_ensemble
     return args
