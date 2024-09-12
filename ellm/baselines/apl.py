@@ -66,10 +66,11 @@ class APLActor(actor.Actor):
             return_probs=True,
             disable_tqdm=True,
         )
-        bt_probs = torch.from_numpy(bt_probs)
 
         if self.args.bt_sample:
-            binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
+            binary_feedback = (
+                torch.bernoulli(bt_probs=torch.from_numpy(bt_probs)).bool().numpy()
+            )
         else:
             binary_feedback = bt_probs > 0.5
         chosen = 1 - binary_feedback

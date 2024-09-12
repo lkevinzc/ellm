@@ -196,11 +196,10 @@ class Actor:
             return_probs=True,
             disable_tqdm=True,
         )
-        bt_probs = torch.from_numpy(bt_probs)
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
 
         if self.args.bt_sample:
-            binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
+            binary_feedback = torch.bernoulli(torch.from_numpy(bt_probs)).bool().numpy()
         else:
             binary_feedback = bt_probs > 0.5
 
