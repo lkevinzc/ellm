@@ -1,6 +1,7 @@
 from typing import Any, List
 
 import llm_blender
+import torch
 
 from ellm.oracles.base import OracleBase
 
@@ -17,14 +18,19 @@ class PairRMOracle(OracleBase):
         candidates_A: List[str],
         candidates_B: List[str],
         batch_size: int = 4,
-        return_logits: bool = False,
+        return_probs: bool = False,
         disable_tqdm: bool = False,
     ) -> List[Any]:
-        return self.blender.compare(
+        logits = self.blender.compare(
             inputs,
             candidates_A,
             candidates_B,
             batch_size=batch_size,
-            return_logits=return_logits,
+            return_logits=True,
             disable_tqdm=disable_tqdm,
         )
+        probs = torch.from_numpy(logits).sigmoid().numpy()
+        if return_probs:
+            return probs
+        else:
+            return probs > 0.5

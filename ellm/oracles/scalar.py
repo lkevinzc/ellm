@@ -12,7 +12,7 @@ from ellm.utils.data import RankDataset
 
 
 class ScalarRMOracle(OracleBase):
-    def __init__(self, reward_model_path: str, tokenizer_path: str) -> None:
+    def __init__(self, reward_model_path: str, tokenizer_path: str, **_) -> None:
         super().__init__()
         self.reward_model = AutoModelForSequenceClassification.from_pretrained(
             reward_model_path, num_labels=1, trust_remote_code=False, device_map="cuda"
@@ -30,7 +30,7 @@ class ScalarRMOracle(OracleBase):
         candidates_A: List[str],
         candidates_B: List[str],
         batch_size: int = 4,
-        return_logits: bool = False,
+        return_probs: bool = False,
         disable_tqdm: bool = False,
     ) -> torch.List[torch.Any]:
         assert len(candidates_A) == len(
@@ -73,8 +73,9 @@ class ScalarRMOracle(OracleBase):
             scores_2 = scores[num_data:]
             all_scores.append(np.stack([scores_1, scores_2], axis=-1))
         all_scores = np.concatenate(all_scores)
-        cmp_results = all_scores[:, 0] - all_scores[:, 1]
-        if return_logits:
-            return cmp_results
+        logits = all_scores[:, 0] - all_scores[:, 1]
+        probs = torch.from_numpy(logits).sigmoid().numpy()
+        if return_probs:
+            return probs
         else:
-            return cmp_results > 0
+            return probs > 0.5
