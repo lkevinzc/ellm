@@ -1,7 +1,9 @@
 import concurrent.futures
 import os
 import threading
+import time
 from typing import Any, List, Sequence
+from warnings import warn
 
 import numpy as np
 from openai import OpenAI
@@ -13,7 +15,12 @@ from ellm.oracles.base import OracleBase
 
 class GPTJudgeOracle(OracleBase):
     def __init__(
-        self, reward_model_path: str, shuffle_order: bool = True, max_workers: int = 4
+        self,
+        reward_model_path: str,
+        shuffle_order: bool = True,
+        max_workers: int = 4,
+        max_retry: int = 10,
+        **_,
     ) -> None:
         super().__init__()
         self.client = OpenAI(
@@ -24,6 +31,7 @@ class GPTJudgeOracle(OracleBase):
         self.shuffle_order = shuffle_order
         self.invalid_count = 0
         self.max_workers = max_workers
+        self.max_retry = max_retry
         self.mutex = threading.Lock()
         self.template = DEFAULT_PAIRWISE_SYSTEM_PROMPT
 
@@ -54,13 +62,25 @@ class GPTJudgeOracle(OracleBase):
                 prompt=prompt, response0=candidates[0], response1=candidates[1]
             )
             messages = [{"role": "user", "content": content}]
-            completion = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=1,
-                logprobs=True,
-                top_logprobs=5,
-            )
+
+            wait_time = 1
+            for _ in range(self.max_retry):
+                try:
+                    completion = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        max_tokens=1,
+                        logprobs=True,
+                        top_logprobs=5,
+                    )
+                    break
+                except Exception as e:
+                    warn(f"OpenAI API failure: {e}")
+                    time.sleep(wait_time)
+                    wait_time *= 1.3
+            else:
+                raise RuntimeError("OpenAI API error!")
+
             first_win_prob = logprob_parser(
                 completion, numerator_token="0", denominator_tokens=["0", "1"]
             )
