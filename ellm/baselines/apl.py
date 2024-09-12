@@ -59,18 +59,19 @@ class APLActor(actor.Actor):
         assert not self.eval_mode
         info = dict()
         prompts, candidates = self.ipc_client.deserialize_ipc(handle)
-        logits = self.oracle.compare(
+        bt_probs = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
+            return_probs=True,
             disable_tqdm=True,
         )
-        bt_probs = torch.from_numpy(logits).sigmoid()
+        bt_probs = torch.from_numpy(bt_probs)
 
         if self.args.bt_sample:
             binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
         else:
-            binary_feedback = logits > 0
+            binary_feedback = bt_probs > 0.5
         chosen = 1 - binary_feedback
         rejected = 1 - chosen
 
@@ -169,14 +170,11 @@ class APLLearner(DAPLearner):
                         f"Entropy filtering: {len(processed_prompts)} -> {output_info1}"
                     )
                     # Keep all filtered prompts; select response pair.
-                    processed_prompts = [output.prompt for output in outputs]
                     processed_prompts = [
                         processed_prompts[i] for i in ent_filtered_indices
                     ]
                     raw_prompts = [raw_prompts[i] for i in ent_filtered_indices]
                     candidates, info = implicit_reward_filtering_response_only(
-                        processed_prompts,
-                        raw_prompts,
                         self.model,
                         self.ref_model,
                         self.tokenizer,
