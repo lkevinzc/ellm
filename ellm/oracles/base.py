@@ -10,7 +10,7 @@ class OracleBase(abc.ABC):
         candidates_A: List[str],
         candidates_B: List[str],
         batch_size: int = 4,
-        return_logits: bool = False,
+        return_probs: bool = False,
         disable_tqdm: bool = False,
     ) -> List[Any]:
         """Provide oracle feedback.

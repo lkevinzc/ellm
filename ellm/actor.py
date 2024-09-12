@@ -127,30 +127,27 @@ class Actor:
 
         if references:
             print("Evaluating using oracle", self.oracle)
-            win_logits = self.oracle.compare(
-                prompts, responses, references, return_logits=True, disable_tqdm=True
+            win_probs = self.oracle.compare(
+                prompts, responses, references, return_probs=True, disable_tqdm=True
             )
-            win_probs = torch.from_numpy(win_logits).sigmoid().numpy()
             return responses, win_probs
         return responses, None
 
     def online_eval(self, prompts, references, candidates):
-        win_logits_1 = self.oracle.compare(
+        win_probs_1 = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             references,
-            return_logits=True,
+            return_probs=True,
             disable_tqdm=True,
         )
-        win_probs_1 = torch.from_numpy(win_logits_1).sigmoid().numpy()
-        win_logits_2 = self.oracle.compare(
+        win_probs_2 = self.oracle.compare(
             prompts,
             [candidates[i][1] for i in range(len(prompts))],
             references,
-            return_logits=True,
+            return_probs=True,
             disable_tqdm=True,
         )
-        win_probs_2 = torch.from_numpy(win_logits_2).sigmoid().numpy()
         return (win_probs_1 + win_probs_2) / 2
 
     def step(
@@ -192,19 +189,20 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
-        logits = self.oracle.compare(
+        bt_probs = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
             [candidates[i][1] for i in range(len(prompts))],
+            return_probs=True,
             disable_tqdm=True,
         )
-        bt_probs = torch.from_numpy(logits).sigmoid()
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
 
         if self.args.bt_sample:
-            binary_feedback = torch.bernoulli(bt_probs).bool().numpy()
+            binary_feedback = torch.bernoulli(torch.from_numpy(bt_probs)).bool().numpy()
         else:
-            binary_feedback = logits > 0
+            binary_feedback = bt_probs > 0.5
+
         chosen = 1 - binary_feedback
         if self.model_rollout:
             # Record metric and overwrite label.
