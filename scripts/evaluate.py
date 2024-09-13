@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import pandas as pd
+from datasets import load_dataset
 from transformers import HfArgumentParser
 
 from ellm.oracles.gpt import GPTJudgeOracle
@@ -12,17 +13,17 @@ class ScriptArguments:
     data_path: str = field(
         metadata={"help": "The directory containing evaluation responses."}
     )
-    ref_data_path: str = field(
-        default="", metadata={"help": "The directory containing reference responses."}
-    )
     judge_model: str = field(
         default="meta-llama/Meta-Llama-3-70B-Instruct",
         metadata={
             "help": "The model name or path to the model to use as a judge. E.g., 'gpt-3.5-turbo-0125', 'meta-llama/Meta-Llama-3-70B-Instruct'."
         },
     )
-    num_examples: Optional[int] = field(
-        default=None, metadata={"help": "The number of examples to evaluate."}
+    sft_ref: bool = field(
+        default=True, metadata={"help": "Whether to use SFT target as reference."}
+    )
+    parallel: Optional[int] = field(
+        default=4, metadata={"help": "The number of parallel calls."}
     )
 
 
@@ -40,16 +41,19 @@ prompts = data["prompt"]
 model_completions = data["response"]
 reference_completions = data["reference"]
 
-if args.ref_data_path:
-    # For head-to-head comparison.
-    reference_completions = pd.read_json(
-        args.ref_data_path,
-        orient="records",
-        lines=True,
-    )["response"]
+if args.sft_ref:
+    # Load the dataset
+    raw_dataset = load_dataset("lkevinzc/tldr-with-sft-reference", split="test")
+    raw_dataset = raw_dataset.select(range(len(prompts)))
+
+    # Extract the prompts and reference completions
+    prompts_data = raw_dataset["prompt"]
+    assert all([prompts[i] == prompts_data[i] for i in range(len(prompts))])
+
+    reference_completions = raw_dataset["summary"]
 
 # Judge the outputs
-judge = GPTJudgeOracle(args.judge_model, max_workers=16)
+judge = GPTJudgeOracle(args.judge_model, max_workers=args.parallel)
 
 win_probs = judge.compare(
     prompts, model_completions, reference_completions, return_probs=True
