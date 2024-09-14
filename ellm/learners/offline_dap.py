@@ -62,7 +62,7 @@ class OfflineDAPLearner(DAPLearner):
 
         for p_ep in range(self.args.num_prompt_epoch):
             progress_bar = tqdm(
-                range(len(self.all_buffer)),
+                range(len(self.all_buffer) // bs),
                 desc=f"Prompt epoch [{p_ep + 1}/{self.args.num_prompt_epoch}]",
                 disable=not self.strategy.is_rank_0(),
             )
