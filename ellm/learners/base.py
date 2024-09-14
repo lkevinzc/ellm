@@ -91,7 +91,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         tokenizer = get_tokenizer(
             args.pretrain,
             model.model,
-            "right",
+            "left",
             use_fast=not args.disable_fast_tokenizer,
         )
 
@@ -137,22 +137,20 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         strategy.print("Raw:", prompts_dataset[0][1])
         strategy.print("Prompt dataloader len:", len(prompts_dataloader))
 
-        if strategy.is_rank_0:
-            eval_prompts_dataset = PromptDataset(
-                eval_prompts_data,
-                tokenizer,
-                strategy,
-                input_template=args.input_template,
-                get_reference=True,
-            )
-            self.eval_prompts_dataloader = DataLoader(
-                eval_prompts_dataset,
-                batch_size=args.micro_rollout_batch_size,
-                shuffle=False,
-                drop_last=False,
-                pin_memory=True,
-            )
-            # self.sample_eval_indices = np.random.choice(len(eval_prompts_dataset), 10)
+        eval_prompts_dataset = PromptDataset(
+            eval_prompts_data,
+            tokenizer,
+            strategy,
+            input_template=args.input_template,
+            get_reference=True,
+        )
+        self.eval_prompts_dataloader = DataLoader(
+            eval_prompts_dataset,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            drop_last=False,
+            pin_memory=True,
+        )
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
@@ -215,14 +213,15 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 reinit=True,
             )
 
-        self.preference_collector = PreferenceCollector(
-            actors,
-            tokenizer,
-            self.ipc_server,
-            args.prompt_max_length,
-            strategy,
-            self._wandb,
-        )
+        if actors:
+            self.preference_collector = PreferenceCollector(
+                actors,
+                tokenizer,
+                self.ipc_server,
+                args.prompt_max_length,
+                strategy,
+                self._wandb,
+            )
         self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
         self.all_buffer = deque(maxlen=int(1e9))
 
@@ -254,7 +253,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # For ZeRO-3:
         #   1. AllGather parameters to rank 0
         #   2. Broadcast parameters from rank 0 to all vllm engines
-        if strategy.is_rank_0():
+        if actors and strategy.is_rank_0():
             master_addr = node_ip_address_from_perspective()
             with socket.socket() as sock:
                 sock.bind(("", 0))
@@ -345,6 +344,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
             self.prompt_epoch = p_ep + 1
 
+        self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
+
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():
                 dist.gather_object(self.all_buffer)
@@ -361,7 +362,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
         for i, pref in enumerate(data_list):
-            # Replace with raw prompts instead of templated ones
+            # Replace with raw prompts instead of templated ones.
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
             if self.args.dump_all_buffer:
@@ -447,14 +448,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "prompt_epoch": self.prompt_epoch,
         }
 
-    def save_logs_and_checkpoints(self, args, batch_steps, train_info):
+    def save_logs_and_checkpoints(self, args, batch_steps, train_info, final=False):
         # eval
         eval_info = {}
-        if batch_steps % args.eval_steps == 0:
+        if final or batch_steps % args.eval_steps == 0:
             eval_info = self.evaluate(self.eval_prompts_dataloader, batch_steps)
 
         # logs
-        if batch_steps % args.logging_steps == 0:
+        if final or batch_steps % args.logging_steps == 0:
             misc_info = self.get_misc_info()
             try:
                 last_lr = self.scheduler.get_last_lr()[0]
