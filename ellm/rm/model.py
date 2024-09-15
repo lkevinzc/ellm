@@ -50,6 +50,10 @@ class RewardModel(abc.ABC, nn.Module):
     def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
         """Learn the reward model based on preference data."""
 
+    @abc.abstractmethod
+    def get_rewards(self, features: torch.Tensor) -> torch.Tensor:
+        """Compute rewards."""
+
 
 class PairWiseLoss(nn.Module):
     """
@@ -116,7 +120,7 @@ class LmcFGTS(RewardModel):
         self.loss_fn = PairWiseLoss()
 
     @torch.no_grad
-    def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
+    def get_rewards(self, features: torch.Tensor) -> torch.Tensor:
         M, N, _ = features.shape
         features = einops.rearrange(features, "m n d -> (m n) d")
         rewards_1 = []
@@ -131,7 +135,7 @@ class LmcFGTS(RewardModel):
 
     @torch.no_grad
     def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
-        rewards = self._get_rewards(features)  # (2, M, N, 1)
+        rewards = self.get_rewards(features)  # (2, M, N, 1)
         avg_rewards = rewards.mean(0)  # (M, N, 1)
         best_actions = avg_rewards.argmax(dim=1)  # (M, 1)
         return best_actions
@@ -140,7 +144,7 @@ class LmcFGTS(RewardModel):
     def get_duel_actions(
         self, features: torch.Tensor
     ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
-        rewards = self._get_rewards(features)
+        rewards = self.get_rewards(features)
         best_actions = rewards.argmax(dim=2)
         first_actions, second_actions = best_actions
         return rewards, first_actions, second_actions
@@ -222,7 +226,7 @@ class EnnDTS(RewardModel):
         self.loss_fn = PairWiseLoss()
 
     @torch.no_grad
-    def _get_rewards(self, features: torch.Tensor) -> torch.Tensor:
+    def get_rewards(self, features: torch.Tensor) -> torch.Tensor:
         M, N, _ = features.shape
         E = self.model.num_ensemble
         features = einops.rearrange(features, "m n d -> (m n) d")
@@ -237,7 +241,7 @@ class EnnDTS(RewardModel):
 
     @torch.no_grad
     def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
-        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
         avg_rewards = rewards.mean(0)  # (M, N, 1)
         best_actions = avg_rewards.argmax(dim=1)  # (M, 1)
         return best_actions
@@ -246,7 +250,7 @@ class EnnDTS(RewardModel):
     def get_duel_actions(
         self, features: torch.Tensor
     ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
-        rewards = self._get_rewards(features)
+        rewards = self.get_rewards(features)
         E = rewards.shape[0]
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement
@@ -308,7 +312,7 @@ class EnnInfoMax(EnnDTS):
 
     @torch.no_grad
     def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
-        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
         _, M, N, _ = rewards.shape
         pref_logits = rewards - einops.rearrange(
             rewards, "e m n 1 -> e m 1 n"
@@ -326,7 +330,7 @@ class EnnTSInfoMax(EnnDTS):
     def get_duel_actions(
         self, features: torch.Tensor
     ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
-        rewards = self._get_rewards(features)  # (E, M, N, 1)
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
         E, M, _, _ = rewards.shape
         best_actions = rewards.argmax(dim=2)  # (E, M, 1)
         # sample without replacement

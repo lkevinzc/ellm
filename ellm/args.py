@@ -48,7 +48,7 @@ def get_default_parser():
         default="1.0",
         help="sampling probs for datasets",
     )
-    parser.add_argument("--max_samples", type=int, default=10000)
+    parser.add_argument("--max_samples", type=int, default=50000)
     parser.add_argument("--max_eval", type=int, default=1000)
 
     # Offline preference dataset
@@ -72,7 +72,11 @@ def get_default_parser():
     parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
     parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument("--learn_rm_only", action="store_true")
+
+    # Model-based
     parser.add_argument("--model_rollout", action="store_true")
+    parser.add_argument("--trust_region_scale", type=float, default=1.0)
+    parser.add_argument("--burn_in_period", type=int, default=10)
 
     parser.add_argument(
         "--exp_method",
@@ -96,7 +100,7 @@ def get_default_parser():
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
     parser.add_argument("--enn_max_try", type=int, default=-1)
-    parser.add_argument("--enn_lambda", type=float, default=0.1)
+    parser.add_argument("--enn_lambda", type=float, default=0.0)
 
     ## LmcFGTS
     parser.add_argument("--lmc_temp", type=float, default=0.01)
@@ -109,6 +113,7 @@ def get_default_parser():
     parser.add_argument("--best_of_n_eval", action="store_true")
     parser.add_argument("--num_bon", type=int, default=1)
     parser.add_argument("--bon_temperature", type=float, default=0.3)
+    parser.add_argument("--eval_batch_size", type=int, default=-1)
 
     # Generation params
     parser.add_argument("--generate_max_length", type=int, default=1024)
@@ -132,7 +137,7 @@ def get_default_parser():
     parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
     parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
-    parser.add_argument("--r_buffer_maxlen", type=int, default=3200)
+    parser.add_argument("--r_buffer_maxlen", type=int, default=50000)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
     parser.add_argument("--max_step_adjustment", type=float, default=1)
 
@@ -206,4 +211,6 @@ def default_args_validation(args):
         assert args.best_of_n_eval
     if args.enn_max_try == -1:
         args.enn_max_try = args.num_ensemble
+    if args.eval_batch_size == -1:
+        args.eval_batch_size = args.micro_rollout_batch_size
     return args
