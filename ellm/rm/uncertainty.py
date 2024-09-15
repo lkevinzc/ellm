@@ -37,3 +37,8 @@ def kl_ensemble(rewards: torch.Tensor) -> torch.Tensor:
     kl_T = kl.transpose(-1, -2)
     kl[nan_idx] = kl_T[nan_idx]
     return (kl + kl_T) / 2
+
+
+def variance_ensemble(rewards: torch.Tensor) -> torch.Tensor:
+    reward_gap = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
+    return reward_gap.var(0)

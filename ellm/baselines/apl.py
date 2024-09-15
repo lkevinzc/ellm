@@ -241,6 +241,10 @@ class APLLearner(DAPLearner):
                 progress_bar.update()
                 steps += 1
 
+        self.save_logs_and_checkpoints(
+            self.args, self.policy_sgd_step, train_info, final=True
+        )
+
         if self.strategy.is_rank_0():
             self._wandb.finish()
             lp.stop()

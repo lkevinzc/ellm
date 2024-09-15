@@ -247,6 +247,7 @@ class ModelBasedExplorer(Explorer):
         self.history_prompts = deque()
         self.history_dueling_candidates = deque()
         self.thresholds = deque(maxlen=1)
+        self.uncertainty_fn = kl_ensemble
 
     def select(
         self, prompts: List[str], candidates: Dict[int, List[str]]
@@ -271,18 +272,18 @@ class ModelBasedExplorer(Explorer):
                 [self.history_dueling_candidates[i] for i in tr_ind],
             )  # (b, 2, d)
             tr_rewards = self.reward_model.get_rewards(tr_features)  # (E, b, 2, 1)
-            tr_kl = kl_ensemble(tr_rewards)  # (b, 2, 2)
-            assert not torch.isnan(tr_kl).any()
+            tr_uct = self.uncertainty_fn(tr_rewards)  # (b, 2, 2)
+            assert not torch.isnan(tr_uct).any()
             threshold = torch.quantile(
-                _tril_flatten(tr_kl), q=0.01, interpolation="nearest"
+                _tril_flatten(tr_uct), q=0.01, interpolation="nearest"
             ).item()
             self.thresholds.append(threshold)
 
             # Construct the trust region.
-            kl = kl_ensemble(rewards)  # (M, N, N')
-            assert not torch.isnan(kl).any()
-            trusted = kl < self.trust_region_scale * np.mean(self.thresholds)
-            valid = trusted * torch.triu(torch.ones_like(kl), diagonal=1)
+            uct = self.uncertainty_fn(rewards)  # (M, N, N')
+            assert not torch.isnan(uct).any()
+            trusted = uct < self.trust_region_scale * np.mean(self.thresholds)
+            valid = trusted * torch.triu(torch.ones_like(uct), diagonal=1)
             mean_rewards = rewards.mean(0)  # (M, N, 1)
             for i in range(len(prompts)):
                 is_model_data[i] = (valid[i].sum() > 0).item()
