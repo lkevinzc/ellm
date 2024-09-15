@@ -72,7 +72,11 @@ def get_default_parser():
     parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
     parser.add_argument("--learn_rm", action="store_true")
     parser.add_argument("--learn_rm_only", action="store_true")
+
+    # Model-based
     parser.add_argument("--model_rollout", action="store_true")
+    parser.add_argument("--trust_region_scale", type=float, default=1.0)
+    parser.add_argument("--burn_in_period", type=int, default=10)
 
     parser.add_argument(
         "--exp_method",
@@ -96,7 +100,7 @@ def get_default_parser():
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
     parser.add_argument("--enn_max_try", type=int, default=-1)
-    parser.add_argument("--enn_lambda", type=float, default=0.1)
+    parser.add_argument("--enn_lambda", type=float, default=0.0)
 
     ## LmcFGTS
     parser.add_argument("--lmc_temp", type=float, default=0.01)

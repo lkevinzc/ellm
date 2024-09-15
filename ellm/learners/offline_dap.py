@@ -86,6 +86,8 @@ class OfflineDAPLearner(DAPLearner):
                 steps += 1
             self.prompt_epoch = p_ep + 1
 
+        self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
+
         if self.strategy.is_rank_0():
             self._wandb.finish()
 
@@ -119,7 +121,8 @@ class OfflineDAPLearner(DAPLearner):
                     sequences[:, batch["input_ids"].shape[1] :],
                     skip_special_tokens=True,
                 )
-                # print(processed_prompts[0], completions[0])
+                completions = [c.strip() for c in completions]
+                print(processed_prompts[0], completions[0])
                 responses.extend(completions)
 
             win_probs = self.oracle.compare(

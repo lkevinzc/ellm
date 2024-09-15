@@ -130,7 +130,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             prompts_dataset,
             args.micro_rollout_batch_size,
             pin_memory=True,
-            shuffle=False,
+            shuffle=True,
         )
         strategy.print("Prompt dataset example:")
         strategy.print("Processed:", prompts_dataset[0][0])
