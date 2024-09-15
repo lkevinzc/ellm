@@ -198,7 +198,7 @@ def get_default_parser():
     return parser
 
 
-def default_args_validation(args):
+def default_args_validation(args: argparse.Namespace):
     # Validation.
     args.dap_algo = getattr(DAPAlgo, args.dap_algo)
     if args.dap_algo != DAPAlgo.SimPO and (

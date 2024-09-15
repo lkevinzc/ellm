@@ -64,14 +64,17 @@ class Actor:
             # We assume reward model-based explorer.
             rm_backbone_cls = backbone.get_cls(args.rm_backbone)
             print("Using RM backbone", args.rm_backbone, rm_backbone_cls)
+            self.rm_backbone = rm_backbone_cls.from_pretrained(
+                args.rm_backbone, device_map="cuda:0"
+            ).eval()
+
             explorer_cls = ModelBasedExplorer if args.model_rollout else Explorer
             self.explorer = explorer_cls(
                 reward_model=getattr(model, args.exp_method)(args).cuda(),
-                rm_backbone=rm_backbone_cls.from_pretrained(
-                    args.rm_backbone, device_map="cuda:0"
-                ).eval(),
+                rm_backbone=self.rm_backbone,
                 args=args,
             )
+
             if args.exp_pretrain:
                 print(f"Loading pretrained ENN from {args.exp_pretrain}")
                 self.explorer.reward_model.load_state_dict(
