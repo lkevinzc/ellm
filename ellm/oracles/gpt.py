@@ -72,6 +72,7 @@ class GPTJudgeOracle(OracleBase):
                         max_tokens=1,
                         logprobs=True,
                         top_logprobs=5,
+                        temperature=0,
                     )
                     break
                 except Exception as e:

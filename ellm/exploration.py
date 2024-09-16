@@ -244,6 +244,7 @@ class ModelBasedExplorer(Explorer):
         self.count = 1
         self.trust_region_scale = args.trust_region_scale
         self.burn_in_period = args.burn_in_period
+        self.max_model_data_ratio = args.max_model_data_ratio
         self.history_prompts = deque()
         self.history_dueling_candidates = deque()
         self.thresholds = deque(maxlen=1)
@@ -265,7 +266,7 @@ class ModelBasedExplorer(Explorer):
         model_rejected_rewards = []
         if self.count > self.burn_in_period:
             # Estimate trust region boundary from history.
-            b = min(128, len(self.history_prompts))
+            b = min(512, len(self.history_prompts))
             tr_ind = np.random.choice(len(self.history_prompts), size=b, replace=False)
             tr_features = self._get_features(
                 [self.history_prompts[i] for i in tr_ind],
@@ -282,12 +283,17 @@ class ModelBasedExplorer(Explorer):
             # Construct the trust region.
             uct = self.uncertainty_fn(rewards)  # (M, N, N')
             assert not torch.isnan(uct).any()
-            trusted = uct < self.trust_region_scale * np.mean(self.thresholds)
+            trusted = uct < (self.trust_region_scale * np.mean(self.thresholds))
             valid = trusted * torch.triu(torch.ones_like(uct), diagonal=1)
             mean_rewards = rewards.mean(0)  # (M, N, 1)
-            for i in range(len(prompts)):
-                is_model_data[i] = (valid[i].sum() > 0).item()
-                if is_model_data[i]:
+
+            max_model_data = int(len(prompts) * self.max_model_data_ratio)
+            prompt_uct = (uct * valid).sum(-1).sum(-1)
+            maybe_model_data_i = prompt_uct.argsort()[:max_model_data].tolist()
+
+            for i in maybe_model_data_i:
+                if valid[i].sum() > 0:
+                    is_model_data[i] = True
                     tr_pairs = torch.where(valid[i])
                     sel_idx = np.random.choice(len(tr_pairs[0]))
                     # logging.info(f"{tr_pairs}, {sel_idx}")
