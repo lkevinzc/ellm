@@ -18,6 +18,7 @@
 pip install torch
 pip install -r requirements.txt
 pip install -e .
+export DS_SKIP_CUDA_CHECK=1 # suppress adam offload error
 ```
 
 ## License

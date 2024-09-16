@@ -213,7 +213,9 @@ class Actor:
             model_rollout_acc = np.sum(model_rollout_correct) / (
                 np.sum(model_data) + 1e-8
             )
+            model_rollout_win_prob = np.nan_to_num(bt_probs[model_data].mean())
             info["eval/model_rollout_acc"] = model_rollout_acc
+            info["eval/model_rollout_win_prob"] = model_rollout_win_prob
 
             # if model_rollout_acc > 0.9:
             #     # privileged information

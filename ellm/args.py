@@ -75,8 +75,9 @@ def get_default_parser():
 
     # Model-based
     parser.add_argument("--model_rollout", action="store_true")
+    parser.add_argument("--max_model_data_ratio", type=float, default=0.5)
     parser.add_argument("--trust_region_scale", type=float, default=1.0)
-    parser.add_argument("--burn_in_period", type=int, default=10)
+    parser.add_argument("--burn_in_period", type=int, default=5)
 
     parser.add_argument(
         "--exp_method",
