@@ -288,7 +288,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def run(self):
         self._init(self.args, self.actors)
 
-        steps = 1
+        self.steps = 1
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -296,7 +296,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints(
                 self.args,
-                self.policy_sgd_step,
+                self.steps,
                 {},
             )
 
@@ -320,31 +320,33 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 )
                 self.process_preference_data(preference_data, raw_prompts)
 
-                if steps % self.update_interval == 0:
-                    train_info = self.preference_learning(steps // self.update_interval)
+                if self.steps % self.update_interval == 0:
+                    train_info = self.preference_learning(
+                        self.steps // self.update_interval
+                    )
 
                     self.save_logs_and_checkpoints(
                         self.args,
-                        steps,
+                        self.steps,
                         train_info,
                     )
 
                     if (
-                        steps // self.update_interval
+                        self.steps // self.update_interval
                     ) % self.args.sync_params_every == 0:
                         self.sync_params_to_actors()
 
                     if (
-                        steps // self.update_interval
+                        self.steps // self.update_interval
                     ) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
 
                 progress_bar.update()
-                steps += 1
+                self.steps += 1
 
             self.prompt_epoch = p_ep + 1
 
-        self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
+        self.save_logs_and_checkpoints(self.args, self.steps, train_info, final=True)
 
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():
@@ -448,14 +450,27 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "prompt_epoch": self.prompt_epoch,
         }
 
-    def save_logs_and_checkpoints(self, args, batch_steps, train_info, final=False):
+    def _should_eval(self):
+        do_eval = self.steps % self.args.eval_steps == 0
+        if not hasattr(self, "last_eval_query_step"):
+            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+            return do_eval
+        query_step_elapse = (
+            self.strategy.all_reduce(self.query_step) - self.last_eval_query_step
+        )
+        if query_step_elapse >= 2560:
+            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+            return True
+        return False
+
+    def save_logs_and_checkpoints(self, train_info, final=False):
         # eval
         eval_info = {}
-        if final or batch_steps % args.eval_steps == 0:
-            eval_info = self.evaluate(self.eval_prompts_dataloader, batch_steps)
+        if final or self._should_eval():
+            eval_info = self.evaluate(self.eval_prompts_dataloader, self.steps)
 
         # logs
-        if final or batch_steps % args.logging_steps == 0:
+        if eval_info or self.steps % self.args.logging_steps == 0:
             misc_info = self.get_misc_info()
             try:
                 last_lr = self.scheduler.get_last_lr()[0]

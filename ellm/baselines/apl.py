@@ -127,7 +127,7 @@ class APLLearner(DAPLearner):
         self.ipc_client = PlasmaShmClient(self.ipc_server)
         self._init(self.args, self.actors)
 
-        steps = 1
+        self.steps = 1
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -135,7 +135,7 @@ class APLLearner(DAPLearner):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints(
                 self.args,
-                self.policy_sgd_step,
+                self.steps,
                 {},
             )
 
@@ -219,27 +219,29 @@ class APLLearner(DAPLearner):
                 )
                 self.process_preference_data(preference_data, raw_prompts)
 
-                if steps % self.update_interval == 0:
-                    train_info = self.preference_learning(steps // self.update_interval)
+                if self.steps % self.update_interval == 0:
+                    train_info = self.preference_learning(
+                        self.steps // self.update_interval
+                    )
 
                     self.save_logs_and_checkpoints(
                         self.args,
-                        steps,
+                        self.steps,
                         train_info,
                     )
 
                     if (
-                        steps // self.update_interval
+                        self.steps // self.update_interval
                     ) % self.args.sync_params_every == 0:
                         self.sync_params_to_actors()
 
                     if (
-                        steps // self.update_interval
+                        self.steps // self.update_interval
                     ) % self.args.buffer_clear_every == 0:
                         self.pi_buffer.clear()
 
                 progress_bar.update()
-                steps += 1
+                self.steps += 1
 
         self.save_logs_and_checkpoints(
             self.args, self.policy_sgd_step, train_info, final=True
