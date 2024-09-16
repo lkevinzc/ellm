@@ -294,11 +294,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.save_logs_and_checkpoints(
-                self.args,
-                self.steps,
-                {},
-            )
+            self.save_logs_and_checkpoints({})
 
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -325,11 +321,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         self.steps // self.update_interval
                     )
 
-                    self.save_logs_and_checkpoints(
-                        self.args,
-                        self.steps,
-                        train_info,
-                    )
+                    self.save_logs_and_checkpoints(train_info)
 
                     if (
                         self.steps // self.update_interval
@@ -346,7 +338,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
             self.prompt_epoch = p_ep + 1
 
-        self.save_logs_and_checkpoints(self.args, self.steps, train_info, final=True)
+        self.save_logs_and_checkpoints(train_info, final=True)
 
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():

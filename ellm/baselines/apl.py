@@ -133,11 +133,7 @@ class APLLearner(DAPLearner):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.save_logs_and_checkpoints(
-                self.args,
-                self.steps,
-                {},
-            )
+            self.save_logs_and_checkpoints({})
 
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -224,11 +220,7 @@ class APLLearner(DAPLearner):
                         self.steps // self.update_interval
                     )
 
-                    self.save_logs_and_checkpoints(
-                        self.args,
-                        self.steps,
-                        train_info,
-                    )
+                    self.save_logs_and_checkpoints(train_info)
 
                     if (
                         self.steps // self.update_interval
@@ -243,9 +235,7 @@ class APLLearner(DAPLearner):
                 progress_bar.update()
                 self.steps += 1
 
-        self.save_logs_and_checkpoints(
-            self.args, self.policy_sgd_step, train_info, final=True
-        )
+        self.save_logs_and_checkpoints(train_info, final=True)
 
         if self.strategy.is_rank_0():
             self._wandb.finish()
