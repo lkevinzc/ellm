@@ -133,7 +133,7 @@ class APLLearner(DAPLearner):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.save_logs_and_checkpoints({})
+            self.save_logs_and_checkpoints({}, eval=True)
 
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -235,7 +235,7 @@ class APLLearner(DAPLearner):
                 progress_bar.update()
                 self.steps += 1
 
-        self.save_logs_and_checkpoints(train_info, final=True)
+        self.save_logs_and_checkpoints(train_info, eval=True)
 
         if self.strategy.is_rank_0():
             self._wandb.finish()

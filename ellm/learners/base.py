@@ -294,7 +294,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self.actor_info = {}
 
         if not self.strategy.args.debug:
-            self.save_logs_and_checkpoints({})
+            self.save_logs_and_checkpoints({}, eval=True)
 
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
@@ -338,7 +338,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
             self.prompt_epoch = p_ep + 1
 
-        self.save_logs_and_checkpoints(train_info, final=True)
+        self.save_logs_and_checkpoints(train_info, eval=True)
 
         if self.args.dump_all_buffer:  # For debug purpose.
             if not self.strategy.is_rank_0():
@@ -448,17 +448,18 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
             return do_eval
         query_step_elapse = (
-            self.strategy.all_reduce(self.query_step) - self.last_eval_query_step
+            self.strategy.all_reduce(self.query_step, op="sum")
+            - self.last_eval_query_step
         )
         if query_step_elapse >= 2560:
             self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
             return True
         return False
 
-    def save_logs_and_checkpoints(self, train_info, final=False):
+    def save_logs_and_checkpoints(self, train_info, eval=False):
         # eval
         eval_info = {}
-        if final or self._should_eval():
+        if eval or self._should_eval():
             eval_info = self.evaluate(self.eval_prompts_dataloader, self.steps)
 
         # logs
