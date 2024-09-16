@@ -1,9 +1,9 @@
 accelerate
 bitsandbytes
 datasets
-deepspeed==0.14.4
+deepspeed==0.15.0
 einops
-flash-attn==2.5.8
+flash-attn==2.6.1
 jsonlines
 loralib
 optimum
