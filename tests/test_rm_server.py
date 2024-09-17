@@ -8,7 +8,7 @@ from fire import Fire
 from ellm.oracles.remote.client import RemoteRMOracle
 
 
-def main(max_workers: int = 4, server_ip: str = "0.0.0.0"):
+def main(max_workers: int = 4, server_addr: str = "0.0.0.0:8000"):
     # A quick validation.
     req = {
         "prompt": "What is the range of the numeric output of a sigmoid node in a neural network?",
@@ -18,14 +18,14 @@ def main(max_workers: int = 4, server_ip: str = "0.0.0.0"):
         ],
     }
     resp = httpx.post(
-        f"http://{server_ip}:8000/compare", content=msgspec.msgpack.encode(req)
+        f"http://{server_addr}/compare", content=msgspec.msgpack.encode(req)
     )
     print(resp.status_code, msgspec.msgpack.decode(resp.content))
 
     # Speed test.
     n = 50
     remote_oracle = RemoteRMOracle(
-        remote_rm_url=f"http://{server_ip}:8000", max_workers=max_workers
+        remote_rm_url=f"http://{server_addr}", max_workers=max_workers
     )
     data = pd.read_json(
         "output/neworacle_dpo_offline_0911T19:18/eval_results/380.json",

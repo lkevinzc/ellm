@@ -288,7 +288,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def run(self):
         self._init(self.args, self.actors)
 
-        self.steps = 1
+        self.steps = 0
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -296,6 +296,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints({}, eval=True)
 
+        self.steps = 1
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(p_ep)
@@ -447,21 +448,22 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self._pending_eval = False
 
         do_eval = self.steps % self.args.eval_steps == 0
-        if not hasattr(self, "last_eval_query_step"):
-            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
-        query_step_elapse = (
-            self.strategy.all_reduce(self.query_step, op="sum")
-            - self.last_eval_query_step
-        )
-        if do_eval and query_step_elapse < self.args.eval_query_interval:
-            # Skip but flag as pending.
-            self._pending_eval = True
+        if not (do_eval or self._pending_eval):
             return False
-        if self._pending_eval and query_step_elapse >= self.args.eval_query_interval:
-            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+        else:
+            if do_eval and not hasattr(self, "last_eval_query_step"):
+                self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+                return True
+            query_step_elapse = (
+                self.strategy.all_reduce(self.query_step, op="sum")
+                - self.last_eval_query_step
+            )
+            if query_step_elapse < self.args.eval_query_interval:
+                self._pending_eval = True
+                return False
             self._pending_eval = False
+            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
             return True
-        return False
 
     def save_logs_and_checkpoints(self, train_info, eval=False):
         # eval
