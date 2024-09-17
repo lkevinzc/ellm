@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import List
 from warnings import warn
@@ -44,10 +45,11 @@ class Actor:
         # ####    Oracle Reward Model    ####
         # ###################################
         oracle_cls = oracles.get_cls(args.reward_oracle)
-        print("Using reward oracle", args.reward_oracle, oracle_cls)
+        logging.info(f"Using reward oracle {args.reward_oracle} {oracle_cls}")
         self.oracle = oracle_cls(
             reward_model_path=args.reward_oracle,
             tokenizer_path=args.pretrain,
+            remote_rm_url=args.remote_rm_url,  # Only for remote RM.
         )
 
         # ###################################
@@ -63,7 +65,7 @@ class Actor:
             assert sampling_params.n > 2
             # We assume reward model-based explorer.
             rm_backbone_cls = backbone.get_cls(args.rm_backbone)
-            print("Using RM backbone", args.rm_backbone, rm_backbone_cls)
+            logging.info(f"Using RM backbone {args.rm_backbone} {rm_backbone_cls}")
             self.rm_backbone = rm_backbone_cls.from_pretrained(
                 args.rm_backbone, device_map="cuda:0"
             ).eval()
@@ -130,7 +132,7 @@ class Actor:
             responses = [candidates[i][0] for i in range(len(prompts))]
 
         if references:
-            print("Evaluating using oracle", self.oracle)
+            logging.info(f"Evaluating using oracle {self.oracle}")
             win_probs = self.oracle.compare(
                 prompts, responses, references, return_probs=True, disable_tqdm=True
             )
@@ -176,7 +178,7 @@ class Actor:
         # step 2a. optional selection
         results = None
         if self.sampling_params.n > 2:
-            print("Selecting dueling responses from candidates...")
+            # print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
             results: ExplorationResults
             results = self.explorer.select(prompts, candidates)
@@ -302,17 +304,17 @@ class Actor:
     def notify_eval_start(self):
         """Temporarily cache the current behavior policy weights to CPU."""
         self.eval_mode = True
-        print("Start offloading...")
+        # print("Start offloading...")
         st = time.time()
         self.cache_model_state = {k: v.cpu() for k, v in self.model.named_parameters()}
-        print(f"Finished offloading in {time.time() - st} seconds")
+        # print(f"Finished offloading in {time.time() - st} seconds")
 
     def notify_eval_done(self):
         assert self.eval_mode
-        print("Start loading from cpu...")
+        # print("Start loading from cpu...")
         st = time.time()
         self.model.load_state_dict(self.cache_model_state)
-        print(f"Finished loading in {time.time() - st} seconds")
+        # print(f"Finished loading in {time.time() - st} seconds")
         self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):

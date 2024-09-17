@@ -443,16 +443,23 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         }
 
     def _should_eval(self):
+        if not hasattr(self, "_pending_eval"):
+            self._pending_eval = False
+
         do_eval = self.steps % self.args.eval_steps == 0
         if not hasattr(self, "last_eval_query_step"):
             self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
-            return do_eval
         query_step_elapse = (
             self.strategy.all_reduce(self.query_step, op="sum")
             - self.last_eval_query_step
         )
-        if query_step_elapse >= 2560:
+        if do_eval and query_step_elapse < self.args.eval_query_interval:
+            # Skip but flag as pending.
+            self._pending_eval = True
+            return False
+        if self._pending_eval and query_step_elapse >= self.args.eval_query_interval:
             self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+            self._pending_eval = False
             return True
         return False
 
