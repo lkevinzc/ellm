@@ -67,6 +67,7 @@ def get_default_parser():
     parser.add_argument("--sync_params_every", type=int, default=1)
     parser.add_argument("--dump_all_buffer", action="store_true")
     parser.add_argument("--bt_sample", action="store_true")
+    parser.add_argument("--remote_rm_url", type=str, default="")
 
     # Exploration
     parser.add_argument("--rm_backbone", type=str, default="llm-blender/PairRM-hf")
@@ -127,6 +128,7 @@ def get_default_parser():
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)
     parser.add_argument("--eval_steps", type=int, default=80)
+    parser.add_argument("--eval_query_interval", type=int, default=-1)
     parser.add_argument("--ckpt_path", type=str, default="./ckpt/checkpoints_dpo")
     parser.add_argument("--max_ckpt_num", type=int, default=3)
     parser.add_argument("--max_ckpt_mem", type=int, default=1000)  # 1000GB
