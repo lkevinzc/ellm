@@ -10,7 +10,6 @@ from ellm.oracles.remote.client import RemoteRMOracle
 
 def main(max_workers: int = 4, server_ip: str = "0.0.0.0"):
     # A quick validation.
-
     req = {
         "prompt": "What is the range of the numeric output of a sigmoid node in a neural network?",
         "candidates": [
