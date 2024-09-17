@@ -122,7 +122,6 @@ def logprob_parser(
         for t in top_logprobs
         if t.token in denominator_tokens + [numerator_token]
     }
-    # if it's not present we say it's probability is 0, which only makes sense if at least one is present
     missing = float("-inf")
     if len(map_tokens_to_logprobs) == 0:
         return np.nan
@@ -132,8 +131,6 @@ def logprob_parser(
         [map_tokens_to_logprobs.get(t, missing) for t in denominator_tokens]
     )
 
-    out_logprob = (
-        baseline_logprob - denominator_logprob
-    )  # typecheck doesn't recognize it's a float
+    out_logprob = baseline_logprob - denominator_logprob
     probability = np.exp(out_logprob)
     return probability
