@@ -29,7 +29,7 @@ def get_default_parser():
     parser.add_argument(
         "--total_gpus",
         type=int,
-        choices=[4, 5, 8],
+        choices=[2, 3, 4, 5, 8],
         default=5,
     )
     parser.add_argument(
