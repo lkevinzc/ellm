@@ -1,3 +1,10 @@
 podLabels:
   rm-server: Skywork-Reward-Llama-3.1-8B
 shmSize: 64Gi
+readinessProbe:
+  exec:
+    command:
+    - bash
+    - /home/aiops/liuzc/ellm/scripts/readiness.sh
+  initialDelaySeconds: 5
+  periodSeconds: 5

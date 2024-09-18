@@ -40,7 +40,7 @@ def get_default_parser():
 
     # Prompts dataset
     parser.add_argument(
-        "--prompt_data", type=str, default="OpenLLMAI/prompt-collection-v0.1"
+        "--prompt_data", type=str, default="lkevinzc/tldr-with-sft-reference"
     )
     parser.add_argument(
         "--prompt_data_probs",
@@ -166,6 +166,7 @@ def get_default_parser():
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--ref_offload", action="store_true", default=False)
     parser.add_argument("--learning_rate", type=float, default=5e-7)
+    parser.add_argument("--lr_warmup_ratio", type=float, default=0.03)
     parser.add_argument("--zpg", type=int, default=1, help="ZeRO++ max partition size")
     parser.add_argument("--adam_offload", action="store_true", default=False)
     parser.add_argument("--flash_attn", action="store_true", default=False)
@@ -183,7 +184,7 @@ def get_default_parser():
     parser.add_argument("--prompt_key", type=str, default="prompt")
     parser.add_argument("--chosen_key", type=str, default="chosen")
     parser.add_argument("--rejected_key", type=str, default="rejected")
-    parser.add_argument("--input_key", type=str, default="input")
+    parser.add_argument("--input_key", type=str, default="prompt")
     parser.add_argument("--output_key", type=str, default="output")
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)
