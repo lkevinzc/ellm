@@ -289,6 +289,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         self._init(self.args, self.actors)
 
         self.steps = 0
+        early_stop = False
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -308,6 +309,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
 
             for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
+                if early_stop:
+                    break
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts, refs
                 )
@@ -336,6 +339,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                 progress_bar.update()
                 self.steps += 1
+
+                if self.get_current_query() > self.args.max_queries:
+                    early_stop = True
 
             self.prompt_epoch = p_ep + 1
 
@@ -443,6 +449,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "prompt_epoch": self.prompt_epoch,
         }
 
+    def get_current_query(self):
+        return self.strategy.all_reduce(self.query_step, op="sum")
+
     def _should_eval(self):
         if not hasattr(self, "_pending_eval"):
             self._pending_eval = False
@@ -452,17 +461,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             return False
         else:
             if do_eval and not hasattr(self, "last_eval_query_step"):
-                self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+                self.last_eval_query_step = self.get_current_query()
                 return True
-            query_step_elapse = (
-                self.strategy.all_reduce(self.query_step, op="sum")
-                - self.last_eval_query_step
-            )
+            query_step_elapse = self.get_current_query() - self.last_eval_query_step
             if query_step_elapse < self.args.eval_query_interval:
                 self._pending_eval = True
                 return False
             self._pending_eval = False
-            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+            self.last_eval_query_step = self.get_current_query()
             return True
 
     def save_logs_and_checkpoints(self, train_info, eval=False):

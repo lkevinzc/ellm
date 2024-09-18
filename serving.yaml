@@ -6,5 +6,5 @@ readinessProbe:
     command:
     - bash
     - /home/aiops/liuzc/ellm/scripts/readiness.sh
-  initialDelaySeconds: 5
+  initialDelaySeconds: 30
   periodSeconds: 5

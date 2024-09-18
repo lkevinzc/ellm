@@ -49,6 +49,7 @@ def get_default_parser():
         help="sampling probs for datasets",
     )
     parser.add_argument("--max_samples", type=int, default=50000)
+    parser.add_argument("--max_queries", type=int, default=50000)
     parser.add_argument("--max_eval", type=int, default=1000)
 
     # Offline preference dataset
