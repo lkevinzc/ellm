@@ -18,7 +18,13 @@ def get_program(
     program = lp.Program("online_dap")
 
     # Resource.
-    if args.total_gpus == 4:
+    if args.total_gpus == 2:
+        actor_gpus = [0]
+        learner_gpus = [1]
+    elif args.total_gpus == 3:
+        actor_gpus = [0, 1]
+        learner_gpus = [2, 1]
+    elif args.total_gpus == 4:
         actor_gpus = [0, 1]
         learner_gpus = [2, 3]
     elif args.total_gpus == 5:

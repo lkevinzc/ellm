@@ -29,7 +29,7 @@ def get_default_parser():
     parser.add_argument(
         "--total_gpus",
         type=int,
-        choices=[4, 5, 8],
+        choices=[2, 3, 4, 5, 8],
         default=5,
     )
     parser.add_argument(
@@ -40,7 +40,7 @@ def get_default_parser():
 
     # Prompts dataset
     parser.add_argument(
-        "--prompt_data", type=str, default="OpenLLMAI/prompt-collection-v0.1"
+        "--prompt_data", type=str, default="lkevinzc/tldr-with-sft-reference"
     )
     parser.add_argument(
         "--prompt_data_probs",
@@ -49,6 +49,7 @@ def get_default_parser():
         help="sampling probs for datasets",
     )
     parser.add_argument("--max_samples", type=int, default=50000)
+    parser.add_argument("--max_queries", type=int, default=50000)
     parser.add_argument("--max_eval", type=int, default=1000)
 
     # Offline preference dataset
@@ -77,6 +78,7 @@ def get_default_parser():
     # Model-based
     parser.add_argument("--model_rollout", action="store_true")
     parser.add_argument("--max_model_data_ratio", type=float, default=0.5)
+    parser.add_argument("--random_model_data", action="store_true")
     parser.add_argument("--trust_region_scale", type=float, default=1.0)
     parser.add_argument("--burn_in_period", type=int, default=5)
 
@@ -139,6 +141,7 @@ def get_default_parser():
     parser.add_argument("--rollout_batch_size", type=int, default=32)
     parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
+    parser.add_argument("--max_sgd_steps", type=int, default=999999999)
     parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
     parser.add_argument("--r_buffer_maxlen", type=int, default=50000)
     parser.add_argument("--prompt_max_length", type=int, default=1024)
@@ -166,6 +169,7 @@ def get_default_parser():
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--ref_offload", action="store_true", default=False)
     parser.add_argument("--learning_rate", type=float, default=5e-7)
+    parser.add_argument("--lr_warmup_ratio", type=float, default=0.03)
     parser.add_argument("--zpg", type=int, default=1, help="ZeRO++ max partition size")
     parser.add_argument("--adam_offload", action="store_true", default=False)
     parser.add_argument("--flash_attn", action="store_true", default=False)
@@ -183,7 +187,7 @@ def get_default_parser():
     parser.add_argument("--prompt_key", type=str, default="prompt")
     parser.add_argument("--chosen_key", type=str, default="chosen")
     parser.add_argument("--rejected_key", type=str, default="rejected")
-    parser.add_argument("--input_key", type=str, default="input")
+    parser.add_argument("--input_key", type=str, default="prompt")
     parser.add_argument("--output_key", type=str, default="output")
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)

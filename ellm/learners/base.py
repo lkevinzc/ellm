@@ -154,7 +154,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
-            len(prompts_dataset) // args.train_batch_size
+            len(prompts_dataset) * args.max_epochs // args.train_batch_size
         )
         max_steps = math.ceil(
             args.num_prompt_epoch
@@ -164,7 +164,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         scheduler = get_scheduler(
             "cosine_with_min_lr",
             optimizer,
-            num_warmup_steps=math.ceil(max_steps * 0.03),
+            num_warmup_steps=math.ceil(max_steps * args.lr_warmup_ratio),
             num_training_steps=max_steps,
             scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1},
         )
@@ -288,7 +288,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
     def run(self):
         self._init(self.args, self.actors)
 
-        self.steps = 1
+        self.steps = 0
+        early_stop = False
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -296,6 +297,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints({}, eval=True)
 
+        self.steps = 1
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(p_ep)
@@ -307,6 +309,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             )
 
             for processed_prompts, raw_prompts, refs in self.prompts_dataloader:
+                if early_stop:
+                    break
                 preference_data, self.actor_info = self.preference_collector(
                     processed_prompts, refs
                 )
@@ -335,6 +339,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
                 progress_bar.update()
                 self.steps += 1
+
+                if self.get_current_query() > self.args.max_queries:
+                    early_stop = True
 
             self.prompt_epoch = p_ep + 1
 
@@ -380,6 +387,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pin_memory=True,
             collate_fn=dataset.collate_fn,
         )
+        local_sgd_steps = 0
         for epoch in range(self.args.max_epochs):
             step_bar = tqdm(
                 range(dataloader.__len__()),
@@ -391,6 +399,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             reward_margin = []
             self.model.train()
             for data in dataloader:
+                if local_sgd_steps > self.args.max_sgd_steps:
+                    break
                 infos = self.learning_step(data)
 
                 # metrics
@@ -405,6 +415,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 self.global_step += 1
                 if self.global_step % self.strategy.accumulated_gradient == 0:
                     self.policy_sgd_step += 1
+                    local_sgd_steps += 1
 
         torch.cuda.empty_cache()
         dist.barrier()
@@ -442,26 +453,27 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "prompt_epoch": self.prompt_epoch,
         }
 
+    def get_current_query(self):
+        return self.strategy.all_reduce(self.query_step, op="sum")
+
     def _should_eval(self):
         if not hasattr(self, "_pending_eval"):
             self._pending_eval = False
 
         do_eval = self.steps % self.args.eval_steps == 0
-        if not hasattr(self, "last_eval_query_step"):
-            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
-        query_step_elapse = (
-            self.strategy.all_reduce(self.query_step, op="sum")
-            - self.last_eval_query_step
-        )
-        if do_eval and query_step_elapse < self.args.eval_query_interval:
-            # Skip but flag as pending.
-            self._pending_eval = True
+        if not (do_eval or self._pending_eval):
             return False
-        if self._pending_eval and query_step_elapse >= self.args.eval_query_interval:
-            self.last_eval_query_step = self.strategy.all_reduce(self.query_step)
+        else:
+            if do_eval and not hasattr(self, "last_eval_query_step"):
+                self.last_eval_query_step = self.get_current_query()
+                return True
+            query_step_elapse = self.get_current_query() - self.last_eval_query_step
+            if query_step_elapse < self.args.eval_query_interval:
+                self._pending_eval = True
+                return False
             self._pending_eval = False
+            self.last_eval_query_step = self.get_current_query()
             return True
-        return False
 
     def save_logs_and_checkpoints(self, train_info, eval=False):
         # eval

@@ -1,4 +1,5 @@
 import abc
+import random
 from argparse import Namespace
 from collections import deque
 from dataclasses import dataclass
@@ -245,6 +246,7 @@ class ModelBasedExplorer(Explorer):
         self.trust_region_scale = args.trust_region_scale
         self.burn_in_period = args.burn_in_period
         self.max_model_data_ratio = args.max_model_data_ratio
+        self.random_model_data = args.random_model_data
         self.history_prompts = deque()
         self.history_dueling_candidates = deque()
         self.thresholds = deque(maxlen=1)
@@ -290,6 +292,11 @@ class ModelBasedExplorer(Explorer):
             max_model_data = int(len(prompts) * self.max_model_data_ratio)
             prompt_uct = (uct * valid).sum(-1).sum(-1)
             maybe_model_data_i = prompt_uct.argsort()[:max_model_data].tolist()
+
+            if self.random_model_data:
+                maybe_model_data_i = list(range(len(prompt_uct)))
+                random.shuffle(maybe_model_data_i)
+                maybe_model_data_i = maybe_model_data_i[:max_model_data]
 
             for i in maybe_model_data_i:
                 if valid[i].sum() > 0:
