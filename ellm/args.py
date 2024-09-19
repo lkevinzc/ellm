@@ -78,6 +78,7 @@ def get_default_parser():
     # Model-based
     parser.add_argument("--model_rollout", action="store_true")
     parser.add_argument("--max_model_data_ratio", type=float, default=0.5)
+    parser.add_argument("--random_model_data", action="store_true")
     parser.add_argument("--trust_region_scale", type=float, default=1.0)
     parser.add_argument("--burn_in_period", type=int, default=5)
 
@@ -140,6 +141,7 @@ def get_default_parser():
     parser.add_argument("--rollout_batch_size", type=int, default=32)
     parser.add_argument("--micro_rollout_batch_size", type=int, default=8)
     parser.add_argument("--max_epochs", type=int, default=1)
+    parser.add_argument("--max_sgd_steps", type=int, default=999999999)
     parser.add_argument("--micro_pi_buffer_maxlen", type=int, default=8)
     parser.add_argument("--r_buffer_maxlen", type=int, default=50000)
     parser.add_argument("--prompt_max_length", type=int, default=1024)

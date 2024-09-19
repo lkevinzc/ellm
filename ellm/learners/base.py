@@ -154,7 +154,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
-            len(prompts_dataset) // args.train_batch_size
+            len(prompts_dataset) * args.max_epochs // args.train_batch_size
         )
         max_steps = math.ceil(
             args.num_prompt_epoch
@@ -387,6 +387,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             pin_memory=True,
             collate_fn=dataset.collate_fn,
         )
+        local_sgd_steps = 0
         for epoch in range(self.args.max_epochs):
             step_bar = tqdm(
                 range(dataloader.__len__()),
@@ -398,6 +399,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             reward_margin = []
             self.model.train()
             for data in dataloader:
+                if local_sgd_steps > self.args.max_sgd_steps:
+                    break
                 infos = self.learning_step(data)
 
                 # metrics
@@ -412,6 +415,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 self.global_step += 1
                 if self.global_step % self.strategy.accumulated_gradient == 0:
                     self.policy_sgd_step += 1
+                    local_sgd_steps += 1
 
         torch.cuda.empty_cache()
         dist.barrier()
