@@ -127,7 +127,7 @@ class APLLearner(DAPLearner):
         self.ipc_client = PlasmaShmClient(self.ipc_server)
         self._init(self.args, self.actors)
 
-        self.steps = 1
+        self.steps = 0
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -135,6 +135,7 @@ class APLLearner(DAPLearner):
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints({}, eval=True)
 
+        self.steps = 1
         for p_ep in range(self.args.num_prompt_epoch):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(p_ep)

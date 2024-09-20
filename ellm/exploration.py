@@ -266,7 +266,7 @@ class ModelBasedExplorer(Explorer):
         is_model_data = [False] * len(prompts)
         model_chosen_rewards = []
         model_rejected_rewards = []
-        if self.count > self.burn_in_period:
+        if self.count > self.burn_in_period and self.trust_region_scale > 0:
             # Estimate trust region boundary from history.
             b = min(512, len(self.history_prompts))
             tr_ind = np.random.choice(len(self.history_prompts), size=b, replace=False)

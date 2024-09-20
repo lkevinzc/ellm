@@ -17,21 +17,30 @@ from ellm.types import RewardData
 from ellm.utils.buffer import UniformBuffer
 
 
-def reward_function(y, offset=0.5):
+def reward_function(y):
     mean, std_dev = -1, 0.5
     component_1 = (1 / (np.sqrt(2 * np.pi * std_dev**2))) * np.exp(
         -0.5 * ((y - mean) / std_dev) ** 2
     )
-    mean, std_dev = 1, 0.35
+    mask = y > mean
+    component_1_right = component_1 * mask
+
+    std_dev = 0.6
+    component_1 = (1 / (np.sqrt(2 * np.pi * std_dev**2))) * np.exp(
+        -0.5 * ((y - mean) / std_dev) ** 2
+    ) + 0.135
+    component_1_left = component_1 * (1 - mask)
+
+    mean, std_dev = 1, 0.45
     component_2 = (1 / (np.sqrt(2 * np.pi * std_dev**2))) * np.exp(
         -0.5 * ((y - mean) / std_dev) ** 2
     )
-    return component_1 + component_2 + offset
+    return 7 * (component_1_left + component_1_right + component_2)
 
 
-class BTRewardModel(reward_model.EnnDTS):
+class BTRewardModel(reward_model.EnnDoubleTS):
     def __init__(
-        self, model_cls: Type[reward_model.EnnDTS], args: Namespace, num_bin: int
+        self, model_cls: Type[reward_model.EnnDoubleTS], args: Namespace, num_bin: int
     ) -> None:
         super().__init__(args)
         self.model = model_cls(args)
@@ -188,22 +197,24 @@ def insert_to_buffer(buffer: UniformBuffer, dueling_actions, feedback):
 
 
 def main(
-    total_budget: int = 10000,
-    n_sample_plot: int = 300,
-    num_ensemble: int = 5,
-    num_bin: int = 600,
-    strategy: Literal["EnnDTS", "EnnInfoMax", "EnnTSInfoMax"] = "EnnTSInfoMax",
+    total_budget: int = 1000,
+    n_sample_plot: int = 200,
+    num_ensemble: int = 10,
+    num_bin: int = 500,
+    strategy: Literal[
+        "EnnDoubleTS", "EnnInfoMax", "EnnTSInfoMax", "EnnPE", "EnnDuelingTS"
+    ] = "EnnTSInfoMax",
     clash_strategy: Literal["random", "top2"] = "random",
     optimization: Literal["oracle", "policy"] = "oracle",
     save_dir: str = "output/toy",
     tag: str = "",
     format: str = "png",
-    enn_lambda: float = 0,
+    enn_lambda: float = 0.1,
     pi_ref_mu: float = -0.5,
     pi_ref_std: float = 0.35,
 ):
     save_dir = os.path.join(
-        save_dir, strategy, clash_strategy if strategy == "EnnDTS" else "", tag
+        save_dir, strategy, clash_strategy if strategy == "EnnDoubleTS" else "", tag
     )
     os.makedirs(save_dir, exist_ok=True)
 
@@ -222,7 +233,9 @@ def main(
     preference_landscape = np.zeros((n_sample_plot, n_sample_plot))
     for i in range(n_sample_plot):
         for j in range(n_sample_plot):
-            z = reward_function(y_plot[i]) > reward_function(y_plot[j])
+            r1 = reward_function(y_plot[i])
+            r2 = reward_function(y_plot[j])
+            z = torch.tensor(r1 - r2).sigmoid().numpy()
             preference_landscape[i, j] = z
 
     plt.figure()
@@ -254,7 +267,6 @@ def main(
 
     # Construct buffer.
     buffer = UniformBuffer(total_budget)
-    # buffer
 
     # Online dueling bandit loop.
     evaluator = Evaluator(save_dir, y_plot, num_bin)
@@ -281,9 +293,13 @@ def main(
                 dueling_actions[0, 1] = np.random.choice(model.support)
             else:
                 raise ValueError
-        feedback = reward_function(dueling_actions[:, 0]) > reward_function(
-            dueling_actions[:, 1]
-        )
+
+        # BT preference model.
+        r1 = reward_function(dueling_actions[:, 0])
+        r2 = reward_function(dueling_actions[:, 1])
+        prob = torch.tensor(r1 - r2).sigmoid()
+        feedback = torch.bernoulli(prob).numpy()
+
         insert_to_buffer(buffer, dueling_actions, feedback)
         init_clash.append(clash)
 

@@ -8,8 +8,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 
-from ellm.rm.networks import EnsembleModel, MLPModel
-from ellm.rm.optim import LAdam
+from ellm.rm.networks import EnsembleModel
+from ellm.rm.uncertainty import kl_ensemble
 from ellm.utils.buffer import UniformBuffer
 
 
@@ -74,123 +74,7 @@ class PairWiseLoss(nn.Module):
         return (loss * mask).mean()
 
 
-class LmcFGTS(RewardModel):
-    "Feel-Good Thompson Sampling for contextual dueling bandits based on Langevin Monte Carlo."
-
-    @classmethod
-    def get_metrics(cls):
-        return {
-            "train/rm/loss_rew": 0,
-            "train/rm/loss_reg": 0,
-        }
-
-    def __init__(self, args: Namespace) -> None:
-        super().__init__()
-        encoding_dim = 2048  # Fixed due to PairRM's backbone
-        # Posterior models
-        self.model_1 = MLPModel(
-            encoding_dim=encoding_dim,
-            hidden_dim=args.rm_hidden_dim,
-        )
-        self.model_2 = MLPModel(
-            encoding_dim=encoding_dim,
-            hidden_dim=args.rm_hidden_dim,
-        )
-        self.model_1.init()
-        self.model_2.init()
-
-        # LMC optimizers
-        self.optimizer_1 = LAdam(
-            self.model_1.parameters(),
-            lr=args.rm_lr,
-            temperature=args.lmc_temp,
-            a=args.lmc_a,
-            asgld=args.lmc_asgld,
-        )
-        self.optimizer_2 = LAdam(
-            self.model_2.parameters(),
-            lr=args.rm_lr,
-            temperature=args.lmc_temp,
-            a=args.lmc_a,
-            asgld=args.lmc_asgld,
-        )
-
-        self.reg_lambda = args.reg_lambda
-        self.sgd_steps = args.rm_sgd_steps
-        self.loss_fn = PairWiseLoss()
-
-    @torch.no_grad
-    def get_rewards(self, features: torch.Tensor) -> torch.Tensor:
-        M, N, _ = features.shape
-        features = einops.rearrange(features, "m n d -> (m n) d")
-        rewards_1 = []
-        rewards_2 = []
-        for ndx in range(0, len(features), self.infer_bs):
-            batch_feat = features[ndx : min(ndx + self.infer_bs, len(features))]
-            rewards_1.append(self.model_1(batch_feat))
-            rewards_2.append(self.model_2(batch_feat))
-        rewards_1 = torch.cat(rewards_1).view(M, N, 1)
-        rewards_2 = torch.cat(rewards_2).view(M, N, 1)
-        return torch.stack([rewards_1, rewards_2])  # (2, M, N, 1)
-
-    @torch.no_grad
-    def get_best_action(self, features: torch.Tensor) -> torch.LongTensor:
-        rewards = self.get_rewards(features)  # (2, M, N, 1)
-        avg_rewards = rewards.mean(0)  # (M, N, 1)
-        best_actions = avg_rewards.argmax(dim=1)  # (M, 1)
-        return best_actions
-
-    @torch.no_grad
-    def get_duel_actions(
-        self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
-        rewards = self.get_rewards(features)
-        best_actions = rewards.argmax(dim=2)
-        first_actions, second_actions = best_actions
-        return rewards, first_actions, second_actions
-
-    def learn(self, buffer: UniformBuffer) -> Dict[str, Any]:
-        total_num_queries = buffer.total_num_queries
-
-        for _ in range(self.sgd_steps):
-            batch = buffer.sample(self.train_bs)
-            pair_feats = batch.pair_features.view(2 * self.train_bs, -1)
-            scores_1 = self.model_1(pair_feats).view(self.train_bs, 2, 1)
-            scores_2 = self.model_2(pair_feats).view(self.train_bs, 2, 1)
-            loss_rew_1 = self.loss_fn(
-                scores_1[..., 0, :], scores_1[..., 1, :], batch.loss_masks
-            )
-            loss_rew_2 = self.loss_fn(
-                scores_2[..., 0, :], scores_2[..., 1, :], batch.loss_masks
-            )
-            loss_reg_1 = (
-                self.reg_lambda
-                * self.train_bs
-                / total_num_queries
-                * self.model_1.regularization()
-            )
-            loss_reg_2 = (
-                self.reg_lambda
-                * self.train_bs
-                / total_num_queries
-                * self.model_2.regularization()
-            )
-
-            self.optimizer_1.zero_grad()
-            (loss_rew_1 + loss_reg_1).backward()
-            self.optimizer_1.step()
-
-            self.optimizer_2.zero_grad()
-            (loss_rew_2 + loss_reg_2).backward()
-            self.optimizer_2.step()
-
-        return {
-            "train/rm/loss_rew": ((loss_rew_1 + loss_rew_2) / 2).detach(),
-            "train/rm/loss_reg": ((loss_reg_1 + loss_reg_2) / 2).detach(),
-        }
-
-
-class EnnDTS(RewardModel):
+class EnnDoubleTS(RewardModel):
     """Double Thompson Sampling based on ensemble."""
 
     @classmethod
@@ -308,8 +192,27 @@ class EnnDTS(RewardModel):
         }
 
 
-class EnnInfoMax(EnnDTS):
+class EnnPE(EnnDoubleTS):
+    """Pure Exploration based on uncertainty measure."""
 
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
+
+        _, M, N, _ = rewards.shape
+        # pref_logits = rewards - einops.rearrange(
+        #     rewards, "e m n 1 -> e m 1 n"
+        # )  # (E, M, N, N')
+        # pref_uncertainty = torch.tril(pref_logits.std(dim=0))
+
+        pref_uncertainty = kl_ensemble(rewards)  # (M, N, N')
+        flatten_idx = pref_uncertainty.view(M, -1).argmax(-1)
+        first_actions = flatten_idx // N
+        second_actions = flatten_idx % N
+        return rewards, first_actions.view(M, 1), second_actions.view(M, 1)
+
+
+class EnnInfoMax(EnnDoubleTS):
     @torch.no_grad
     def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
         rewards = self.get_rewards(features)  # (E, M, N, 1)
@@ -318,14 +221,15 @@ class EnnInfoMax(EnnDTS):
             rewards, "e m n 1 -> e m 1 n"
         )  # (E, M, N, N')
         pref_uncertainty = torch.tril(pref_logits.std(dim=0))
+
+        # pref_uncertainty = variance_ensemble(rewards)
         flatten_idx = pref_uncertainty.view(M, -1).argmax(-1)
         first_actions = flatten_idx // N
         second_actions = flatten_idx % N
         return rewards, first_actions.view(M, 1), second_actions.view(M, 1)
 
 
-class EnnTSInfoMax(EnnDTS):
-
+class EnnTSInfoMax(EnnDoubleTS):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
@@ -344,11 +248,12 @@ class EnnTSInfoMax(EnnDTS):
             if -1 not in second_actions:
                 break
 
-        # TODO remove this ugly half-half later because we will not do fg-ts comparison; AND remove fg-ts related codes
-        pref_logits = rewards - einops.rearrange(
-            rewards, "e m n 1 -> e m 1 n"
-        )  # (E, M, N, N')
-        pref_uncertainty = pref_logits.std(dim=0)
+        # pref_logits = rewards - einops.rearrange(
+        #     rewards, "e m n 1 -> e m 1 n"
+        # )  # (E, M, N, N')
+        # pref_uncertainty = pref_logits.std(dim=0)
+        # pref_uncertainty = variance_ensemble(rewards)
+        pref_uncertainty = kl_ensemble(rewards)
 
         second_actions_info_max = torch.stack(
             [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
@@ -357,6 +262,28 @@ class EnnTSInfoMax(EnnDTS):
         second_actions = torch.where(
             second_actions == -1, second_actions_info_max, second_actions
         )
+        return rewards, first_actions, second_actions
+
+
+class EnnDuelingTS(EnnDoubleTS):
+
+    @torch.no_grad
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
+        E, M, _, _ = rewards.shape
+        best_actions = rewards.argmax(dim=2)  # (E, M, 1)
+        # sample without replacement
+        s1 = list(range(E))
+        random.shuffle(s1)
+        first_actions = best_actions[s1[0]]
+
+        pref_uncertainty = kl_ensemble(rewards)  # (M, N, N')
+        second_actions = torch.stack(
+            [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
+        ).view(M, 1)
+
         return rewards, first_actions, second_actions
 
 

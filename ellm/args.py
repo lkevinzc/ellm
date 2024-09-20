@@ -85,7 +85,14 @@ def get_default_parser():
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "LmcFGTS"],
+        choices=[
+            "no",
+            "EnnDoubleTS",
+            "EnnPE",
+            "EnnDuelingTS",
+            "EnnInfoMax",
+            "EnnTSInfoMax",
+        ],
         default="no",
         help="Types of exploration.",
     )
@@ -104,7 +111,7 @@ def get_default_parser():
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
     parser.add_argument("--enn_max_try", type=int, default=-1)
-    parser.add_argument("--enn_lambda", type=float, default=0.0)
+    parser.add_argument("--enn_lambda", type=float, default=0.1)
 
     ## LmcFGTS
     parser.add_argument("--lmc_temp", type=float, default=0.01)
