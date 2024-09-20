@@ -57,6 +57,17 @@ class ExplorerBase(abc.ABC):
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
 
+    @abc.abstractmethod
+    def compare(self, candidate_features: torch.Tensor) -> torch.Tensor:
+        """Compare two candidates.
+
+        Args:
+            candidate_features (torch.Tensor): (M, 2, d)
+
+        Returns:
+            torch.Tensor: (M,) 1 means the first is better than the second
+        """
+
 
 class Explorer(ExplorerBase):
     def __init__(
@@ -124,12 +135,16 @@ class Explorer(ExplorerBase):
                         features[i][selected_candidate_indices[i]]
                         for i in range(len(prompts))
                     ]
-                ).cpu()
+                )
             ),
             init_clash=init_clash.tolist(),
             is_model_data=[False] * len(prompts),
             info=info,
         )
+
+    def compare(self, candidate_features: torch.Tensor) -> torch.Tensor:
+        rewards = self.reward_model.get_rewards(candidate_features).mean(0).squeeze()
+        return (rewards[:, 0] > rewards[:, 1]).float().cpu()
 
     def _inner_select(
         self,

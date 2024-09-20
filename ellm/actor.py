@@ -207,6 +207,10 @@ class Actor:
 
         chosen = 1 - binary_feedback
 
+        if results and self.args.test_rm:
+            first_better = self.explorer.compare(results.candidate_features)
+            info["eval/rm_acc"] = (binary_feedback == first_better).mean()
+
         # Model-based rollout for sampling efficiency.
         if self.model_rollout:
             # Record metric and overwrite label.
@@ -231,19 +235,9 @@ class Actor:
             for i in range(len(prompts))
         ]
 
-        if self.learning_rm:
-            # Measure the internal RM accuracy
-            support = [
-                results.init_clash[i] and not same_response[i]
-                for i in range(len(prompts))
-            ]
-            rm_acc = np.sum(
-                [binary_feedback[i] and support[i] for i in range(len(prompts))]
-            ) / (np.sum(support) + 1e-8)
-            info["eval/rm_acc"] = rm_acc
-
         if results is not None:
             info.update(results.info)
+            candidate_features = results.candidate_features.cpu()
 
         preference_data = [
             PreferenceData(
@@ -252,14 +246,10 @@ class Actor:
                 chosen_response=candidates[i][chosen[i]],
                 rejected_response=candidates[i][rejected[i]],
                 chosen_feature=(
-                    results.candidate_features[i][chosen[i]]
-                    if self.learning_rm
-                    else None
+                    candidate_features[i][chosen[i]] if self.learning_rm else None
                 ),
                 rejected_feature=(
-                    results.candidate_features[i][rejected[i]]
-                    if self.learning_rm
-                    else None
+                    candidate_features[i][rejected[i]] if self.learning_rm else None
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=same_response[i],
