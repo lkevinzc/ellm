@@ -21,8 +21,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args.num_ensemble = 1
-    # Just to reuse existing class, but has nothing to do with DTS;
+    # Just to reuse existing class, but has nothing to do with the method;
     # we re-defined an Explorer in RSActor.
-    args.exp_method = "EnnDTS"
+    args.exp_method = "EnnPE"
     args = default_args_validation(args)
     run_rs(args)
