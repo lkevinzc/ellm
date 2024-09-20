@@ -113,12 +113,6 @@ def get_default_parser():
     parser.add_argument("--enn_max_try", type=int, default=-1)
     parser.add_argument("--enn_lambda", type=float, default=0.1)
 
-    ## LmcFGTS
-    parser.add_argument("--lmc_temp", type=float, default=0.01)
-    parser.add_argument("--lmc_a", type=float, default=1)
-    parser.add_argument("--lmc_asgld", action="store_true")
-    parser.add_argument("--reg_lambda", type=float, default=10)
-
     # Evaluation params
     parser.add_argument("--online_evaluation", action="store_true")
     parser.add_argument("--best_of_n_eval", action="store_true")
@@ -136,7 +130,7 @@ def get_default_parser():
     parser.add_argument("--save_path", type=str, default="./output")
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)
-    parser.add_argument("--eval_steps", type=int, default=80)
+    parser.add_argument("--eval_steps", type=int, default=20)
     parser.add_argument("--eval_query_interval", type=int, default=-1)
     parser.add_argument("--ckpt_path", type=str, default="./ckpt/checkpoints_dpo")
     parser.add_argument("--max_ckpt_num", type=int, default=3)
