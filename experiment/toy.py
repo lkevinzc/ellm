@@ -181,6 +181,7 @@ class Evaluator:
                 loop=0,
             )
             [os.remove(fn) for fn in fns]
+            print("saved at", os.path.join(self.save_dir, f"rm_trajectory.gif"))
 
 
 def insert_to_buffer(buffer: UniformBuffer, dueling_actions, feedback):
@@ -199,7 +200,7 @@ def insert_to_buffer(buffer: UniformBuffer, dueling_actions, feedback):
 def main(
     total_budget: int = 1000,
     n_sample_plot: int = 200,
-    num_ensemble: int = 10,
+    num_ensemble: int = 5,
     num_bin: int = 500,
     strategy: Literal[
         "EnnDoubleTS", "EnnInfoMax", "EnnTSInfoMax", "EnnPE", "EnnDuelingTS"

@@ -248,12 +248,12 @@ class EnnTSInfoMax(EnnDoubleTS):
             if -1 not in second_actions:
                 break
 
-        # pref_logits = rewards - einops.rearrange(
-        #     rewards, "e m n 1 -> e m 1 n"
-        # )  # (E, M, N, N')
-        # pref_uncertainty = pref_logits.std(dim=0)
-        # pref_uncertainty = variance_ensemble(rewards)
-        pref_uncertainty = kl_ensemble(rewards)
+        pref_logits = rewards - einops.rearrange(
+            rewards, "e m n 1 -> e m 1 n"
+        )  # (E, M, N, N')
+        pref_uncertainty = pref_logits.std(dim=0)
+        # # pref_uncertainty = variance_ensemble(rewards)
+        # pref_uncertainty = kl_ensemble(rewards)
 
         second_actions_info_max = torch.stack(
             [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0

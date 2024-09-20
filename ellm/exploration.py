@@ -144,7 +144,7 @@ class Explorer(ExplorerBase):
 
     def compare(self, candidate_features: torch.Tensor) -> torch.Tensor:
         rewards = self.reward_model.get_rewards(candidate_features).mean(0).squeeze()
-        return (rewards[:, 0] > rewards[:, 1]).float().cpu()
+        return (rewards[:, 0] > rewards[:, 1]).float().cpu().numpy()
 
     def _inner_select(
         self,
@@ -362,7 +362,7 @@ class ModelBasedExplorer(Explorer):
                         features[i][selected_candidate_indices[i]]
                         for i in range(len(prompts))
                     ]
-                ).cpu()
+                )
             ),
             init_clash=init_clash.tolist(),
             is_model_data=is_model_data,
