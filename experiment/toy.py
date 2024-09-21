@@ -225,6 +225,7 @@ def main(
     format: str = "png",
     enn_lambda: float = 0,
     track: bool = False,
+    bt_sample: bool = False,
     pi_ref_mu: float = -0.5,
     pi_ref_std: float = 0.35,
 ):
@@ -239,6 +240,7 @@ def main(
             "num_ensemble": num_ensemble,
             "num_bin": num_bin,
             "reward_function_version": reward_function_version,
+            "bt_sample": bt_sample,
         },
         mode="online" if track else "disabled",
     )
@@ -268,7 +270,10 @@ def main(
         for j in range(n_sample_plot):
             r1 = reward_function(y_plot[i])
             r2 = reward_function(y_plot[j])
-            z = torch.tensor(r1 - r2).sigmoid().numpy()
+            if bt_sample:
+                z = torch.tensor(r1 - r2).sigmoid().numpy()
+            else:
+                z = r1 > r2
             preference_landscape[i, j] = z
 
     plt.figure()
@@ -338,8 +343,11 @@ def main(
             dueling_actions = model.explore()
             r1 = reward_function(dueling_actions[:, 0])
             r2 = reward_function(dueling_actions[:, 1])
-            prob = torch.tensor(r1 - r2).sigmoid()
-            feedback = torch.bernoulli(prob).numpy()
+            if bt_sample:
+                prob = torch.tensor(r1 - r2).sigmoid()
+                feedback = torch.bernoulli(prob).numpy()
+            else:
+                feedback = r1 > r2
             insert_to_buffer(buffer, dueling_actions, feedback)
             num_interaction += len(dueling_actions)
             cumulative_regret = log_regrets(
@@ -359,8 +367,11 @@ def main(
         # BT preference model.
         r1 = reward_function(dueling_actions[:, 0])
         r2 = reward_function(dueling_actions[:, 1])
-        prob = torch.tensor(r1 - r2).sigmoid()
-        feedback = torch.bernoulli(prob).numpy()
+        if bt_sample:
+            prob = torch.tensor(r1 - r2).sigmoid()
+            feedback = torch.bernoulli(prob).numpy()
+        else:
+            feedback = r1 > r2
 
         insert_to_buffer(buffer, dueling_actions, feedback)
         init_clash.append(clash)

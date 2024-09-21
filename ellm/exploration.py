@@ -1,5 +1,5 @@
 import abc
-import random
+import logging
 from argparse import Namespace
 from collections import deque
 from dataclasses import dataclass
@@ -249,6 +249,13 @@ class Explorer(ExplorerBase):
         return features
 
 
+class ModelBasedExplorer2(Explorer):
+    def __init__(
+        self, reward_model: RewardModel, rm_backbone: RMBackbone, args: Namespace
+    ) -> None:
+        super().__init__(reward_model, rm_backbone, args)
+
+
 class ModelBasedExplorer(Explorer):
     """It not only explores based on Thompson sampling, but also synthesizes
     model rollout when it trusts itself to boot sample efficiency."""
@@ -281,6 +288,7 @@ class ModelBasedExplorer(Explorer):
         is_model_data = [False] * len(prompts)
         model_chosen_rewards = []
         model_rejected_rewards = []
+        model_pred_prob = []
         if self.count > self.burn_in_period:
             # Estimate trust region boundary from history.
             b = min(512, len(self.history_prompts))
@@ -305,20 +313,26 @@ class ModelBasedExplorer(Explorer):
             mean_rewards = rewards.mean(0)  # (M, N, 1)
 
             max_model_data = int(len(prompts) * self.max_model_data_ratio)
-            prompt_uct = (uct * valid).sum(-1).sum(-1)
-            maybe_model_data_i = prompt_uct.argsort()[:max_model_data].tolist()
+            prompt_valid = valid.sum(-1).sum(-1)
+            # Take prompt which has the most pairs in the trust region.
+            maybe_model_data_i = prompt_valid.argsort()[-max_model_data:].tolist()
+            # prompt_uct = (uct * valid).sum(-1).sum(-1)
+            # maybe_model_data_i = prompt_uct.argsort()[-max_model_data:].tolist()
 
-            if self.random_model_data:
-                maybe_model_data_i = list(range(len(prompt_uct)))
-                random.shuffle(maybe_model_data_i)
-                maybe_model_data_i = maybe_model_data_i[:max_model_data]
+            # if self.random_model_data:
+            #     maybe_model_data_i = list(range(len(uct)))
+            #     random.shuffle(maybe_model_data_i)
+            #     maybe_model_data_i = maybe_model_data_i[:max_model_data]
 
             for i in maybe_model_data_i:
                 if valid[i].sum() > 0:
                     is_model_data[i] = True
-                    tr_pairs = torch.where(valid[i])
-                    sel_idx = np.random.choice(len(tr_pairs[0]))
-                    # logging.info(f"{tr_pairs}, {sel_idx}")
+                    inv_uct = (uct[i].max() - uct[i]) * valid[i]
+                    tr_pairs = torch.where(inv_uct == inv_uct.max())
+                    # tr_pairs = torch.where(valid[i])
+                    sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+
+                    logging.info(f"{tr_pairs}, {sel_idx}")
                     tr_rewards = mean_rewards[
                         i, [tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]]
                     ].reshape(-1)
@@ -326,7 +340,7 @@ class ModelBasedExplorer(Explorer):
                     assert len(tr_rank) == 2
                     tr_chosen = tr_pairs[tr_rank[1]][sel_idx]
                     tr_rejected = tr_pairs[tr_rank[0]][sel_idx]
-                    # logging.info(f"{tr_rewards},{tr_rank},{tr_chosen}, {tr_rejected}")
+                    logging.info(f"{tr_rewards},{tr_rank},{tr_chosen}, {tr_rejected}")
                     dueling_candidates[i] = [
                         candidates[i][tr_chosen],
                         candidates[i][tr_rejected],
@@ -336,6 +350,11 @@ class ModelBasedExplorer(Explorer):
                     )
                     model_chosen_rewards.append(mean_rewards[i, tr_chosen].item())
                     model_rejected_rewards.append(mean_rewards[i, tr_rejected].item())
+                    model_pred_prob.append(
+                        (mean_rewards[i, tr_chosen] - mean_rewards[i, tr_rejected])
+                        .sigmoid()
+                        .item()
+                    )
 
         # Update history.
         for i in range(len(prompts)):
@@ -350,6 +369,13 @@ class ModelBasedExplorer(Explorer):
                 "explorer/tr_threshold_mean": np.mean(self.thresholds),
                 "explorer/model_chosen_rewards": np.mean(model_chosen_rewards),
                 "explorer/model_rejected_rewards": np.mean(model_rejected_rewards),
+                "explorer/model_pred_prob_min": (
+                    np.min(model_pred_prob) if model_pred_prob else np.nan
+                ),
+                "explorer/model_pred_prob_max": (
+                    np.max(model_pred_prob) if model_pred_prob else np.nan
+                ),
+                "explorer/model_pred_prob_mean": np.mean(model_pred_prob),
                 "explorer/history_length": len(self.history_prompts),
                 "explorer/model_data_ratio": np.mean(is_model_data),
             }
