@@ -85,7 +85,7 @@ def get_default_parser():
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "LmcFGTS"],
+        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "EnnDuelingTS"],
         default="no",
         help="Types of exploration.",
     )

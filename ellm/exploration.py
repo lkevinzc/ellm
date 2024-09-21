@@ -9,9 +9,9 @@ import numpy as np
 import torch
 import tree
 
+from ellm.rm import uncertainty
 from ellm.rm.backbone import RMBackbone
 from ellm.rm.model import RewardModel
-from ellm.rm.uncertainty import kl_ensemble
 from ellm.types import Metric
 
 
@@ -55,6 +55,17 @@ class ExplorerBase(abc.ABC):
 
         Returns:
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
+        """
+
+    @abc.abstractmethod
+    def compare(self, candidate_features: torch.Tensor) -> torch.Tensor:
+        """Compare candidates using the reward model.
+
+        Args:
+            candidate_features (torch.Tensor): (M, 2, d)
+
+        Returns:
+            torch.Tensor: (M,), 1 means the first wins
         """
 
 
@@ -124,12 +135,16 @@ class Explorer(ExplorerBase):
                         features[i][selected_candidate_indices[i]]
                         for i in range(len(prompts))
                     ]
-                ).cpu()
+                )
             ),
             init_clash=init_clash.tolist(),
             is_model_data=[False] * len(prompts),
             info=info,
         )
+
+    def compare(self, candidate_features: torch.Tensor) -> torch.Tensor:
+        rewards = self.reward_model.get_rewards(candidate_features).mean(0)  # (M, 2, 1)
+        return (rewards[:, 0] > rewards[:, 1]).squeeze().float().cpu().numpy()
 
     def _inner_select(
         self,
@@ -250,7 +265,7 @@ class ModelBasedExplorer(Explorer):
         self.history_prompts = deque()
         self.history_dueling_candidates = deque()
         self.thresholds = deque(maxlen=1)
-        self.uncertainty_fn = kl_ensemble
+        self.uncertainty_fn = uncertainty.logits_variance
 
     def select(
         self, prompts: List[str], candidates: Dict[int, List[str]]
@@ -347,7 +362,7 @@ class ModelBasedExplorer(Explorer):
                         features[i][selected_candidate_indices[i]]
                         for i in range(len(prompts))
                     ]
-                ).cpu()
+                )
             ),
             init_clash=init_clash.tolist(),
             is_model_data=is_model_data,

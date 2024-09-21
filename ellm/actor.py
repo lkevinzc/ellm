@@ -233,14 +233,10 @@ class Actor:
 
         if self.learning_rm:
             # Measure the internal RM accuracy
-            support = [
-                results.init_clash[i] and not same_response[i]
-                for i in range(len(prompts))
-            ]
-            rm_acc = np.sum(
-                [binary_feedback[i] and support[i] for i in range(len(prompts))]
-            ) / (np.sum(support) + 1e-8)
-            info["eval/rm_acc"] = rm_acc
+            pred_first_win = self.explorer.compare(results.candidate_features)
+            candidate_features = results.candidate_features.cpu()
+            correct = pred_first_win == binary_feedback
+            info["eval/rm_acc"] = correct.mean().item()
 
         if results is not None:
             info.update(results.info)
@@ -252,14 +248,10 @@ class Actor:
                 chosen_response=candidates[i][chosen[i]],
                 rejected_response=candidates[i][rejected[i]],
                 chosen_feature=(
-                    results.candidate_features[i][chosen[i]]
-                    if self.learning_rm
-                    else None
+                    candidate_features[i][chosen[i]] if self.learning_rm else None
                 ),
                 rejected_feature=(
-                    results.candidate_features[i][rejected[i]]
-                    if self.learning_rm
-                    else None
+                    candidate_features[i][rejected[i]] if self.learning_rm else None
                 ),
                 init_clash=results.init_clash[i] if self.learning_rm else False,
                 same=same_response[i],

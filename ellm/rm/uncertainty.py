@@ -2,7 +2,7 @@ import einops
 import torch
 
 
-def kl_ensemble(rewards: torch.Tensor) -> torch.Tensor:
+def kl_divergence(rewards: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
     """Epistemic uncertainty measured by model disagreement between ensembles.
 
     Calculates KL divergence between individual distribution predictions and
@@ -15,22 +15,26 @@ def kl_ensemble(rewards: torch.Tensor) -> torch.Tensor:
         torch.Tensor: Uncertainty, (M, N, N')
     """
     E = rewards.shape[0]
-    reward_gap = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
-    prob = reward_gap.sigmoid()  # (E, M, N, N')
+    p = bradley_terry_prob_with_temp(
+        rewards,
+        einops.rearrange(rewards, "e m n 1 -> e m 1 n"),
+        temperature=temperature,
+    )  # (E, M, N, N')
 
-    prob_mean = prob.mean(dim=0, keepdim=True)
-    prob_c = 1 - prob
-    prob_c_mean = 1 - prob_mean
+    p_mean = p.mean(dim=0, keepdim=True)
+    pc = 1 - p
+    pc_mean = 1 - p_mean
 
-    component_1 = prob * torch.log(prob / prob_mean)
-    component_0 = prob_c * torch.log(prob_c / prob_c_mean)
+    component_p = p * torch.log(p / p_mean)
+    component_pc = pc * torch.log(pc / pc_mean)
 
-    repeat_prob_mean = prob_mean.repeat(E, 1, 1, 1)
+    repeat_p_mean = p_mean.repeat(E, 1, 1, 1)
+    repeat_pc_mean = pc_mean.repeat(E, 1, 1, 1)
     kl = torch.where(
-        repeat_prob_mean == 0,
-        component_0,
-        torch.where(repeat_prob_mean == 1, component_1, component_0 + component_1),
-    ).sum(dim=0)
+        repeat_p_mean == 1,
+        component_p,
+        torch.where(repeat_pc_mean == 1, component_pc, component_p + component_pc),
+    ).mean(dim=0)
 
     # Avoid numerical errors.
     nan_idx = torch.isnan(kl)
@@ -39,6 +43,25 @@ def kl_ensemble(rewards: torch.Tensor) -> torch.Tensor:
     return (kl + kl_T) / 2
 
 
-def variance_ensemble(rewards: torch.Tensor) -> torch.Tensor:
-    reward_gap = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
-    return reward_gap.var(0)
+def logits_variance(rewards: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+    """Computes variance of pre-sigmoid logits."""
+    del temperature
+    pref_logits = rewards - einops.rearrange(
+        rewards, "e m n 1 -> e m 1 n"
+    )  # (E, M, N, N')
+    return pref_logits.var(dim=0)
+
+
+def probabilities_variance(
+    rewards: torch.Tensor, temperature: float = 1.0
+) -> torch.Tensor:
+    prob = bradley_terry_prob_with_temp(
+        rewards,
+        einops.rearrange(rewards, "e m n 1 -> e m 1 n"),
+        temperature=temperature,
+    )
+    return prob.var(dim=0)
+
+
+def bradley_terry_prob_with_temp(scores_1, score_2, temperature=1.0):
+    return 1 / (1 + torch.exp(-(scores_1 - score_2) / temperature))
