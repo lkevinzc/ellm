@@ -77,9 +77,14 @@ def get_default_parser():
 
     # Model-based
     parser.add_argument("--model_rollout", action="store_true")
-    parser.add_argument("--max_model_data_ratio", type=float, default=0.5)
-    parser.add_argument("--random_model_data", action="store_true")
-    parser.add_argument("--trust_region_scale", type=float, default=1.0)
+    parser.add_argument("--max_model_data_ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--model_data_strategy",
+        type=str,
+        choices=["random", "epistemic_uct", "total_uct"],
+        default="random",
+        help="Types of model data selection.",
+    )
     parser.add_argument("--burn_in_period", type=int, default=5)
 
     parser.add_argument(

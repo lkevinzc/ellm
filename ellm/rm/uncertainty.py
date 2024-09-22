@@ -63,5 +63,14 @@ def probabilities_variance(
     return prob.var(dim=0)
 
 
+def bernoulli_variance(rewards: torch.Tensor):
+    prob = bradley_terry_prob_with_temp(
+        rewards,
+        einops.rearrange(rewards, "e m n 1 -> e m 1 n"),
+        temperature=1.0,
+    ).mean(0)
+    return prob * (1 - prob)
+
+
 def bradley_terry_prob_with_temp(scores_1, score_2, temperature=1.0):
     return 1 / (1 + torch.exp(-(scores_1 - score_2) / temperature))

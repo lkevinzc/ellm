@@ -1,7 +1,6 @@
 import abc
-import logging
+import random
 from argparse import Namespace
-from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -265,18 +264,64 @@ class ModelBasedExplorer(Explorer):
     ) -> None:
         super().__init__(reward_model, rm_backbone, args)
         self.count = 1
-        self.trust_region_scale = args.trust_region_scale
         self.burn_in_period = args.burn_in_period
         self.max_model_data_ratio = args.max_model_data_ratio
-        self.random_model_data = args.random_model_data
-        self.history_prompts = deque()
-        self.history_dueling_candidates = deque()
-        self.thresholds = deque(maxlen=1)
+        self.model_data_selector = getattr(self, f"_{args.model_data_strategy}_select")
         self.uncertainty_fn = uncertainty.logits_variance
+
+    def _random_select(
+        self,
+        candidates,
+        rewards,
+        dueling_candidates,
+        selected_candidate_indices,
+        is_model_data,
+    ):
+        single_rewards = rewards[np.random.choice(len(rewards))]
+        max_model_data = int(len(is_model_data) * self.max_model_data_ratio)
+        is_model_data[:max_model_data] = 1
+        random.shuffle(is_model_data)
+        for i, imd in enumerate(is_model_data):
+            if imd:
+                candidate_1, candidate_2 = np.random.choice(
+                    len(candidates[i]), 2, replace=False
+                )
+                if single_rewards[i, candidate_1] > single_rewards[i, candidate_2]:
+                    rnd_chosen, rnd_rejected = candidate_1, candidate_2
+                else:
+                    rnd_chosen, rnd_rejected = candidate_2, candidate_1
+                dueling_candidates[i] = [
+                    candidates[i][rnd_chosen],
+                    candidates[i][rnd_rejected],
+                ]
+                selected_candidate_indices[i] = torch.tensor([rnd_chosen, rnd_rejected])
+        return dueling_candidates, selected_candidate_indices, is_model_data
+
+    def _epistemic_uct_select(
+        self,
+        candidates,
+        rewards,
+        dueling_candidates,
+        selected_candidate_indices,
+        is_model_data,
+    ):
+        pass
+
+    def _total_uct_select(
+        self,
+        candidates,
+        rewards,
+        dueling_candidates,
+        selected_candidate_indices,
+        is_model_data,
+    ):
+        pass
 
     def select(
         self, prompts: List[str], candidates: Dict[int, List[str]]
     ) -> ExplorationResults:
+        # Select the query points using exploration strategies.
+        # Be optimistic and reduce uncertainty.
         (
             rewards,  # rewards: (E, M, N, 1)
             dueling_candidates,
@@ -285,69 +330,27 @@ class ModelBasedExplorer(Explorer):
             init_clash,
             info,
         ) = self._inner_select(prompts, candidates)
-        is_model_data = [False] * len(prompts)
+        # Replace queries that the agent is already confident about the results.
+        # Utilize uncertainty to build trust region.
+        is_model_data = np.zeros(len(prompts))
         model_chosen_rewards = []
         model_rejected_rewards = []
         model_pred_prob = []
         if self.count > self.burn_in_period:
-            # Estimate trust region boundary from history.
-            b = min(512, len(self.history_prompts))
-            tr_ind = np.random.choice(len(self.history_prompts), size=b, replace=False)
-            tr_features = self._get_features(
-                [self.history_prompts[i] for i in tr_ind],
-                [self.history_dueling_candidates[i] for i in tr_ind],
-            )  # (b, 2, d)
-            tr_rewards = self.reward_model.get_rewards(tr_features)  # (E, b, 2, 1)
-            tr_uct = self.uncertainty_fn(tr_rewards)  # (b, 2, 2)
-            assert not torch.isnan(tr_uct).any()
-            threshold = torch.quantile(
-                _tril_flatten(tr_uct), q=0.01, interpolation="nearest"
-            ).item()
-            self.thresholds.append(threshold)
-
-            # Construct the trust region.
-            uct = self.uncertainty_fn(rewards)  # (M, N, N')
-            assert not torch.isnan(uct).any()
-            trusted = uct < (self.trust_region_scale * np.mean(self.thresholds))
-            valid = trusted * torch.triu(torch.ones_like(uct), diagonal=1)
+            dueling_candidates, selected_candidate_indices, is_model_data = (
+                self.model_data_selector(
+                    candidates,
+                    rewards,
+                    dueling_candidates,
+                    selected_candidate_indices,
+                    is_model_data,
+                )
+            )
             mean_rewards = rewards.mean(0)  # (M, N, 1)
-
-            max_model_data = int(len(prompts) * self.max_model_data_ratio)
-            prompt_valid = valid.sum(-1).sum(-1)
-            # Take prompt which has the most pairs in the trust region.
-            maybe_model_data_i = prompt_valid.argsort()[-max_model_data:].tolist()
-            # prompt_uct = (uct * valid).sum(-1).sum(-1)
-            # maybe_model_data_i = prompt_uct.argsort()[-max_model_data:].tolist()
-
-            # if self.random_model_data:
-            #     maybe_model_data_i = list(range(len(uct)))
-            #     random.shuffle(maybe_model_data_i)
-            #     maybe_model_data_i = maybe_model_data_i[:max_model_data]
-
-            for i in maybe_model_data_i:
-                if valid[i].sum() > 0:
-                    is_model_data[i] = True
-                    inv_uct = (uct[i].max() - uct[i]) * valid[i]
-                    tr_pairs = torch.where(inv_uct == inv_uct.max())
-                    # tr_pairs = torch.where(valid[i])
-                    sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
-
-                    logging.info(f"{tr_pairs}, {sel_idx}")
-                    tr_rewards = mean_rewards[
-                        i, [tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]]
-                    ].reshape(-1)
-                    tr_rank = tr_rewards.argsort()
-                    assert len(tr_rank) == 2
-                    tr_chosen = tr_pairs[tr_rank[1]][sel_idx]
-                    tr_rejected = tr_pairs[tr_rank[0]][sel_idx]
-                    logging.info(f"{tr_rewards},{tr_rank},{tr_chosen}, {tr_rejected}")
-                    dueling_candidates[i] = [
-                        candidates[i][tr_chosen],
-                        candidates[i][tr_rejected],
-                    ]
-                    selected_candidate_indices[i] = torch.tensor(
-                        [tr_chosen, tr_rejected]
-                    )
+            for i in range(len(prompts)):
+                if is_model_data[i]:
+                    tr_chosen = selected_candidate_indices[i, 0]
+                    tr_rejected = selected_candidate_indices[i, 1]
                     model_chosen_rewards.append(mean_rewards[i, tr_chosen].item())
                     model_rejected_rewards.append(mean_rewards[i, tr_rejected].item())
                     model_pred_prob.append(
@@ -356,17 +359,53 @@ class ModelBasedExplorer(Explorer):
                         .item()
                     )
 
-        # Update history.
-        for i in range(len(prompts)):
-            # Only record true environment experiences.
-            if not is_model_data[i]:
-                self.history_prompts.append(prompts[i])
-                self.history_dueling_candidates.append(dueling_candidates[i])
+            # # Construct the trust region.
+            # uct = self.uncertainty_fn(rewards)  # (M, N, N')
+            # assert not torch.isnan(uct).any()
+            # prompt_uct = uct.mean(-1).mean(-1)
+
+            # max_model_data = int(len(prompts) * self.max_model_data_ratio)
+            # prompt_valid = valid.sum(-1).sum(-1)
+            # # Take prompt which has the most pairs in the trust region.
+            # maybe_model_data_i = prompt_valid.argsort()[-max_model_data:].tolist()
+            # prompt_uct = (uct * valid).sum(-1).sum(-1)
+            # maybe_model_data_i = prompt_uct.argsort()[-max_model_data:].tolist()
+
+            # if self.random_model_data:
+            #     maybe_model_data_i = list(range(len(uct)))
+            #     random.shuffle(maybe_model_data_i)
+            #     maybe_model_data_i = maybe_model_data_i[:max_model_data]
+
+            # single_rewards = rewards[0]
+            # for i in maybe_model_data_i:
+            #     if valid[i].sum() > 0:
+            #         is_model_data[i] = True
+            #         inv_uct = (uct[i].max() - uct[i]) * valid[i]
+            #         tr_pairs = torch.where(inv_uct == inv_uct.max())
+            #         # tr_pairs = torch.where(valid[i])
+            #         sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+
+            #         logging.info(f"{tr_pairs}, {sel_idx}")
+            #         tr_rewards = mean_rewards[
+            #             i, [tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]]
+            #         ].reshape(-1)
+            #         tr_rank = tr_rewards.argsort()
+            #         assert len(tr_rank) == 2
+            #         tr_chosen = tr_pairs[tr_rank[1]][sel_idx]
+            #         tr_rejected = tr_pairs[tr_rank[0]][sel_idx]
+            #         logging.info(f"{tr_rewards},{tr_rank},{tr_chosen}, {tr_rejected}")
+            #         dueling_candidates[i] = [
+            #             candidates[i][tr_chosen],
+            #             candidates[i][tr_rejected],
+            #         ]
+            #         selected_candidate_indices[i] = torch.tensor(
+            #             [tr_chosen, tr_rejected]
+            #         )
+
         self.count += 1
 
         info.update(
             {
-                "explorer/tr_threshold_mean": np.mean(self.thresholds),
                 "explorer/model_chosen_rewards": np.mean(model_chosen_rewards),
                 "explorer/model_rejected_rewards": np.mean(model_rejected_rewards),
                 "explorer/model_pred_prob_min": (
@@ -376,7 +415,6 @@ class ModelBasedExplorer(Explorer):
                     np.max(model_pred_prob) if model_pred_prob else np.nan
                 ),
                 "explorer/model_pred_prob_mean": np.mean(model_pred_prob),
-                "explorer/history_length": len(self.history_prompts),
                 "explorer/model_data_ratio": np.mean(is_model_data),
             }
         )
@@ -391,7 +429,7 @@ class ModelBasedExplorer(Explorer):
                 )
             ),
             init_clash=init_clash.tolist(),
-            is_model_data=is_model_data,
+            is_model_data=is_model_data.astype("bool").tolist(),
             info=info,
         )
 
