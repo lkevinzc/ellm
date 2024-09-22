@@ -13,8 +13,16 @@ class XPOActor(actor.Actor):
 
     def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
         super().__init__(ipc_server, vllm_args, sampling_params, args)
-        self.ref_llm = vllm.LLM(**vllm_args)
         self.sampling_params.n = 1  # one for each llm
+        self.offload_ref_model = args.xpo_offload_actor_ref
+
+        if not self.offload_ref_model:
+            self.ref_llm = vllm.LLM(**vllm_args)
+        else:
+            self.ref_llm = None
+            self.cache_ref_model_state = {
+                k: v.cpu() for k, v in self.model.named_parameters()
+            }
 
     def generate(self, prompts: actor.List[str], sampling_params: vllm.SamplingParams):
         if self.eval_mode:
@@ -24,9 +32,19 @@ class XPOActor(actor.Actor):
         candidates = {}
 
         for llm in [self.llm, self.ref_llm]:
-            outputs = llm.generate(
-                prompts, sampling_params=sampling_params, use_tqdm=False
-            )
+            if llm is not None:
+                outputs = llm.generate(
+                    prompts, sampling_params=sampling_params, use_tqdm=False
+                )
+            else:
+                # Cache current llm's weights, load ref_llm for infer and restore
+                # original llm's weights.
+                self.notify_eval_start()
+                self.model.load_state_dict(self.cache_ref_model_state)
+                outputs = self.llm.generate(
+                    prompts, sampling_params=sampling_params, use_tqdm=False
+                )
+                self.notify_eval_done()
             for i in range(len(outputs)):
                 # for each prompt
                 if i not in candidates:
