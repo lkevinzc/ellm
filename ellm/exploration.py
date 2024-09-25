@@ -4,6 +4,7 @@ from argparse import Namespace
 from dataclasses import dataclass
 from typing import Dict, List
 
+import einops
 import numpy as np
 import torch
 import tree
@@ -267,7 +268,7 @@ class ModelBasedExplorer(Explorer):
         self.burn_in_period = args.burn_in_period
         self.max_model_data_ratio = args.max_model_data_ratio
         self.model_data_selector = getattr(self, f"_{args.model_data_strategy}_select")
-        self.uncertainty_fn = uncertainty.logits_variance
+        self.pure_model_based = args.pure_model_based
 
     def _random_select(
         self,
@@ -277,19 +278,21 @@ class ModelBasedExplorer(Explorer):
         selected_candidate_indices,
         is_model_data,
     ):
-        single_rewards = rewards[np.random.choice(len(rewards))]
+        mean_rewards = rewards.mean(0)
         max_model_data = int(len(is_model_data) * self.max_model_data_ratio)
         is_model_data[:max_model_data] = 1
         random.shuffle(is_model_data)
         for i, imd in enumerate(is_model_data):
             if imd:
-                candidate_1, candidate_2 = np.random.choice(
-                    len(candidates[i]), 2, replace=False
-                )
-                if single_rewards[i, candidate_1] > single_rewards[i, candidate_2]:
-                    rnd_chosen, rnd_rejected = candidate_1, candidate_2
-                else:
-                    rnd_chosen, rnd_rejected = candidate_2, candidate_1
+                # candidate_1, candidate_2 = np.random.choice(
+                #     len(candidates[i]), 2, replace=False
+                # )
+                # if single_rewards[i, candidate_1] > single_rewards[i, candidate_2]:
+                #     rnd_chosen, rnd_rejected = candidate_1, candidate_2
+                # else:
+                #     rnd_chosen, rnd_rejected = candidate_2, candidate_1
+                rnd_chosen = mean_rewards[i].squeeze().argmax()
+                rnd_rejected = mean_rewards[i].squeeze().argmin()
                 dueling_candidates[i] = [
                     candidates[i][rnd_chosen],
                     candidates[i][rnd_rejected],
@@ -305,7 +308,38 @@ class ModelBasedExplorer(Explorer):
         selected_candidate_indices,
         is_model_data,
     ):
-        pass
+        mean_rewards = rewards.mean(0)
+        reward_margin_abs = torch.abs(
+            mean_rewards - einops.rearrange(mean_rewards, "m n 1 -> m 1 n")
+        )
+        max_model_data = int(len(is_model_data) * self.max_model_data_ratio)
+        uct = uncertainty.logits_variance(rewards)  # (M, N, N')
+        prompt_uct = uct.mean(-1).mean(-1)
+        model_data_indices = prompt_uct.argsort()[:max_model_data].tolist()
+        for i in model_data_indices:
+            is_model_data[i] = 1
+            # candidate_1, candidate_2 = np.random.choice(
+            #     len(candidates[i]), 2, replace=False
+            # )
+            # if mean_rewards[i, candidate_1] > mean_rewards[i, candidate_2]:
+            #     rnd_chosen, rnd_rejected = candidate_1, candidate_2
+            # else:
+            #     rnd_chosen, rnd_rejected = candidate_2, candidate_1
+            valid = uct[i] <= torch.quantile(uct[i], 0.5)
+            valid_margin = reward_margin_abs[i] * valid
+            tr_pairs = torch.where(valid_margin == valid_margin.max())
+            sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+            candidate_1, candidate_2 = tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]
+            if mean_rewards[i, candidate_1] > mean_rewards[i, candidate_2]:
+                rnd_chosen, rnd_rejected = candidate_1, candidate_2
+            else:
+                rnd_chosen, rnd_rejected = candidate_2, candidate_1
+            dueling_candidates[i] = [
+                candidates[i][rnd_chosen],
+                candidates[i][rnd_rejected],
+            ]
+            selected_candidate_indices[i] = torch.tensor([rnd_chosen, rnd_rejected])
+        return dueling_candidates, selected_candidate_indices, is_model_data
 
     def _total_uct_select(
         self,
@@ -315,7 +349,28 @@ class ModelBasedExplorer(Explorer):
         selected_candidate_indices,
         is_model_data,
     ):
-        pass
+        mean_rewards = rewards.mean(0)
+        max_model_data = int(len(is_model_data) * self.max_model_data_ratio)
+        uct = uncertainty.logits_variance(rewards)  # (M, N, N')
+        al_uct = uncertainty.bernoulli_variance(rewards)  # (M, N, N')
+
+        prompt_uct = uct.mean(-1).mean(-1)
+        model_data_indices = prompt_uct.argsort()[:max_model_data].tolist()
+        for i in model_data_indices:
+            is_model_data[i] = 1
+            tr_pairs = torch.where(al_uct[i] == al_uct[i].min())
+            sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+            candidate_1, candidate_2 = tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]
+            if mean_rewards[i, candidate_1] > mean_rewards[i, candidate_2]:
+                rnd_chosen, rnd_rejected = candidate_1, candidate_2
+            else:
+                rnd_chosen, rnd_rejected = candidate_2, candidate_1
+            dueling_candidates[i] = [
+                candidates[i][rnd_chosen],
+                candidates[i][rnd_rejected],
+            ]
+            selected_candidate_indices[i] = torch.tensor([rnd_chosen, rnd_rejected])
+        return dueling_candidates, selected_candidate_indices, is_model_data
 
     def select(
         self, prompts: List[str], candidates: Dict[int, List[str]]
@@ -336,6 +391,9 @@ class ModelBasedExplorer(Explorer):
         model_chosen_rewards = []
         model_rejected_rewards = []
         model_pred_prob = []
+        sel_pair_ep_uct = []
+        sel_prompt_ep_uct = []
+        uct_mean = 0
         if self.count > self.burn_in_period:
             dueling_candidates, selected_candidate_indices, is_model_data = (
                 self.model_data_selector(
@@ -347,18 +405,27 @@ class ModelBasedExplorer(Explorer):
                 )
             )
             mean_rewards = rewards.mean(0)  # (M, N, 1)
-            for i in range(len(prompts)):
-                if is_model_data[i]:
-                    tr_chosen = selected_candidate_indices[i, 0]
-                    tr_rejected = selected_candidate_indices[i, 1]
-                    model_chosen_rewards.append(mean_rewards[i, tr_chosen].item())
-                    model_rejected_rewards.append(mean_rewards[i, tr_rejected].item())
-                    model_pred_prob.append(
-                        (mean_rewards[i, tr_chosen] - mean_rewards[i, tr_rejected])
-                        .sigmoid()
-                        .item()
-                    )
+            uct = uncertainty.logits_variance(rewards)
+            uct_mean = uct.mean().item()
 
+        for i in range(len(prompts)):
+            if is_model_data[i]:
+                tr_chosen = selected_candidate_indices[i, 0]
+                tr_rejected = selected_candidate_indices[i, 1]
+
+                model_chosen_rewards.append(mean_rewards[i, tr_chosen].item())
+                model_rejected_rewards.append(mean_rewards[i, tr_rejected].item())
+                model_pred_prob.append(
+                    (mean_rewards[i, tr_chosen] - mean_rewards[i, tr_rejected])
+                    .sigmoid()
+                    .item()
+                )
+                sel_pair_ep_uct.append(uct[i][tr_chosen, tr_rejected].item())
+                sel_prompt_ep_uct.append(uct[i].mean().item())
+            else:
+                if self.pure_model_based:
+                    # Disable learning.
+                    dueling_candidates[i] = ["dummy", "dummy"]
             # # Construct the trust region.
             # uct = self.uncertainty_fn(rewards)  # (M, N, N')
             # assert not torch.isnan(uct).any()
@@ -415,6 +482,11 @@ class ModelBasedExplorer(Explorer):
                     np.max(model_pred_prob) if model_pred_prob else np.nan
                 ),
                 "explorer/model_pred_prob_mean": np.mean(model_pred_prob),
+                "explorer/sel_pair_ep_uct_mean": np.mean(sel_pair_ep_uct),
+                "explorer/sel_pair_ep_uct_std": np.std(sel_pair_ep_uct),
+                "explorer/sel_prompt_ep_uct_mean": np.std(sel_prompt_ep_uct),
+                "explorer/sel_prompt_ep_uct_std": np.std(sel_prompt_ep_uct),
+                "explorer/all_ep_uct_mean": uct_mean,
                 "explorer/model_data_ratio": np.mean(is_model_data),
             }
         )
