@@ -2,6 +2,7 @@ import concurrent.futures
 import os
 import threading
 import time
+import traceback
 from typing import Any, List, Sequence
 from warnings import warn
 
@@ -76,7 +77,7 @@ class GPTJudgeOracle(OracleBase):
                     )
                     break
                 except Exception as e:
-                    warn(f"OpenAI API failure: {e}")
+                    warn(f"OpenAI API failure: {e} {traceback.format_exc()}")
                     time.sleep(wait_time)
                     wait_time *= 1.3
             else:
@@ -86,6 +87,7 @@ class GPTJudgeOracle(OracleBase):
                 completion, numerator_token="0", denominator_tokens=["0", "1"]
             )
             if np.isnan(first_win_prob):
+                print("Invalid win prob!")
                 with self.mutex:
                     self.invalid_count += 1
                 return np.random.uniform(0, 1)
