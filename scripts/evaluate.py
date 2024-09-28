@@ -21,30 +21,42 @@ data_paths = [
     # "./output/skyworkrm_dpo_online_0920T16:13/eval_results/391.json",
     # "./output/skyworkrm_dpo_online_0920T15:15/eval_results/391.json",
     # "./output/skyworkrm_dpo_online_0917T08:29/eval_results/380.json",
+    ## 1B Online sea
+    "./output/skyworkrm_dpo_sea_0925T15:53/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_0925T11:49/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_0925T07:47/eval_results/567.json",
     ## 2.8B STF
-    "./output/skyworkrm_dpo_offline_0921T06:59/eval_results/0.json",
-    "./output/skyworkrm_dpo_offline_0921T03:35/eval_results/0.json",
-    "./output/skyworkrm_dpo_offline_0918T02:32/eval_results/0.json",
-    ## 2.8B Offline
-    "./output/skyworkrm_dpo_offline_0921T06:59/eval_results/391.json",
-    "./output/skyworkrm_dpo_offline_0921T03:35/eval_results/391.json",
-    "./output/skyworkrm_dpo_offline_0918T02:32/eval_results/391.json",
-    ## 2.8B Online passive
-    "./output/skyworkrm_dpo_online_0921T06:59/eval_results/391.json",
-    "./output/skyworkrm_dpo_online_0921T03:38/eval_results/391.json",
-    "./output/skyworkrm_dpo_online_0918T01:53/eval_results/391.json",
-    ## 6.9B STF
-    "./output/skyworkrm_dpo_offline_0921T21:17/eval_results/0.json",
-    "./output/skyworkrm_dpo_offline_0921T17:56/eval_results/0.json",
-    "./output/skyworkrm_dpo_offline_0918T03:59/eval_results/0.json",
-    ## 6.9B Offline
-    "./output/skyworkrm_dpo_offline_0921T21:17/eval_results/391.json",
-    "./output/skyworkrm_dpo_offline_0921T17:56/eval_results/391.json",
-    "./output/skyworkrm_dpo_offline_0918T03:59/eval_results/391.json",
-    ## 6.9B Online passive
-    "./output/skyworkrm_dpo_online_0921T21:16/eval_results/391.json",
-    "./output/skyworkrm_dpo_online_0921T17:50/eval_results/391.json",
-    "./output/skyworkrm_dpo_online_0918T04:02/eval_results/391.json",
+    # "./output/skyworkrm_dpo_offline_0921T06:59/eval_results/0.json",
+    # "./output/skyworkrm_dpo_offline_0921T03:35/eval_results/0.json",
+    # "./output/skyworkrm_dpo_offline_0918T02:32/eval_results/0.json",
+    # ## 2.8B Offline
+    # "./output/skyworkrm_dpo_offline_0921T06:59/eval_results/391.json",
+    # "./output/skyworkrm_dpo_offline_0921T03:35/eval_results/391.json",
+    # "./output/skyworkrm_dpo_offline_0918T02:32/eval_results/391.json",
+    # ## 2.8B Online passive
+    # "./output/skyworkrm_dpo_online_0921T06:59/eval_results/391.json",
+    # "./output/skyworkrm_dpo_online_0921T03:38/eval_results/391.json",
+    # "./output/skyworkrm_dpo_online_0918T01:53/eval_results/391.json",
+    ## 2.8B Online sea
+    "./output/skyworkrm_dpo_sea_lmd0.2_0925T20:10/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_lmd0.2_0926T05:34/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_lmd0.2_0926T10:32/eval_results/567.json",
+    # ## 6.9B STF
+    # "./output/skyworkrm_dpo_offline_0921T21:17/eval_results/0.json",
+    # "./output/skyworkrm_dpo_offline_0921T17:56/eval_results/0.json",
+    # "./output/skyworkrm_dpo_offline_0918T03:59/eval_results/0.json",
+    # ## 6.9B Offline
+    # "./output/skyworkrm_dpo_offline_0921T21:17/eval_results/391.json",
+    # "./output/skyworkrm_dpo_offline_0921T17:56/eval_results/391.json",
+    # "./output/skyworkrm_dpo_offline_0918T03:59/eval_results/391.json",
+    # ## 6.9B Online passive
+    # "./output/skyworkrm_dpo_online_0921T21:16/eval_results/391.json",
+    # "./output/skyworkrm_dpo_online_0921T17:50/eval_results/391.json",
+    # "./output/skyworkrm_dpo_online_0918T04:02/eval_results/391.json",
+    ## 6.9B Online sea
+    "./output/skyworkrm_dpo_sea_0926T03:44/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_0925T20:05/eval_results/567.json",
+    "./output/skyworkrm_dpo_sea_0925T12:16/eval_results/567.json",
 ]
 
 

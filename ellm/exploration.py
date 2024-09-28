@@ -278,7 +278,12 @@ class ModelBasedExplorer(Explorer):
         selected_candidate_indices,
         is_model_data,
     ):
-        mean_rewards = rewards.mean(0)
+        reward_margin = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
+        E, M, _, _ = reward_margin.shape
+        random_belief_reward_margin = reward_margin[
+            torch.randint(E, (M,)), torch.arange(M)
+        ]  # M, N, N'
+        # mean_rewards = rewards.mean(0)
         max_model_data = int(len(is_model_data) * self.max_model_data_ratio)
         is_model_data[:max_model_data] = 1
         random.shuffle(is_model_data)
@@ -291,8 +296,17 @@ class ModelBasedExplorer(Explorer):
                 #     rnd_chosen, rnd_rejected = candidate_1, candidate_2
                 # else:
                 #     rnd_chosen, rnd_rejected = candidate_2, candidate_1
-                rnd_chosen = mean_rewards[i].squeeze().argmax()
-                rnd_rejected = mean_rewards[i].squeeze().argmin()
+                # rnd_chosen = mean_rewards[i].squeeze().argmax()
+                # rnd_rejected = mean_rewards[i].squeeze().argmin()
+                margin_i = random_belief_reward_margin[i]
+                margin_i_abs = torch.abs(margin_i)
+                tr_pairs = torch.where(margin_i_abs == margin_i_abs.max())
+                sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+                candidate_1, candidate_2 = tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]
+                if margin_i[candidate_1, candidate_2] > 0:
+                    rnd_chosen, rnd_rejected = candidate_1, candidate_2
+                else:
+                    rnd_chosen, rnd_rejected = candidate_2, candidate_1
                 dueling_candidates[i] = [
                     candidates[i][rnd_chosen],
                     candidates[i][rnd_rejected],
