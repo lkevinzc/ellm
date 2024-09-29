@@ -351,6 +351,18 @@ class EnnDuelingTS(EnnDTS):
         return rewards, first_actions, second_actions
 
 
+class EnnPassive(EnnDTS):
+    """Learning RM but not for sampling, only for BoN generation."""
+
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
+        M, _, _ = features.shape  # M, N, d
+        rewards = self.get_rewards(features)
+        first_actions = torch.zeros((M, 1), device=features.device).long()
+        second_actions = torch.ones((M, 1), device=features.device).long()
+        return rewards, first_actions, second_actions
+
+
 class EnnTSInfoMax(EnnDTS):
 
     @torch.no_grad

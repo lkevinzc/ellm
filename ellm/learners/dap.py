@@ -12,10 +12,8 @@ class DAPLearner(LearnerBase):
     def _init(self, args, actors) -> None:
         super()._init(args, actors)
 
-        if self.algo in [DAPAlgo.DPO, DAPAlgo.IPO]:
-            self.loss = DPOLoss(
-                args.beta, args.label_smoothing, ipo=self.algo == DAPAlgo.IPO
-            )
+        if self.algo in [DAPAlgo.DPO, DAPAlgo.IPO, DAPAlgo.SLiC]:
+            self.loss = DPOLoss(args.beta, args.label_smoothing, dap_algo=self.algo)
         elif self.algo == DAPAlgo.SimPO:
             self.loss = SimPOLoss(
                 args.beta, args.gamma_beta_ratio, args.label_smoothing

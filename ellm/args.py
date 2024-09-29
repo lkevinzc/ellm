@@ -13,8 +13,8 @@ def get_default_parser():
     parser.add_argument(
         "--dap_algo",
         type=str,
-        choices=["DPO", "IPO", "SimPO"],
-        default="SimPO",
+        choices=["DPO", "IPO", "SLiC", "SimPO"],
+        default="DPO",
         help="Direct alignment from preference method.",
     )
 
@@ -92,7 +92,14 @@ def get_default_parser():
     parser.add_argument(
         "--exp_method",
         type=str,
-        choices=["no", "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "EnnDuelingTS"],
+        choices=[
+            "no",
+            "EnnDTS",
+            "EnnInfoMax",
+            "EnnTSInfoMax",
+            "EnnDuelingTS",
+            "EnnPassive",
+        ],
         default="no",
         help="Types of exploration.",
     )
