@@ -6,6 +6,7 @@ from typing import Any, Literal, Tuple, Type
 import numpy as np
 import torch
 import tyro
+import wandb
 from matplotlib import pyplot as plt
 from ml_collections import ConfigDict
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -16,6 +17,7 @@ from ellm.rm import model as reward_model
 from ellm.types import RewardData
 from ellm.utils.buffer import UniformBuffer
 
+reward_function_version = "3"
 
 def reward_function(y):
     mean, std_dev = -1, 0.5
@@ -47,6 +49,16 @@ class BTRewardModel(reward_model.EnnDoubleTS):
         # The way to take \arg\max.
         self.optimization = args.optimization
         self.support = np.linspace(-3, 3, num_bin, dtype=np.float32)
+
+    def get_best_action(self, features: Tensor) -> LongTensor:
+        del features  # No context.
+
+        if self.optimization == "oracle":
+            features = torch.from_numpy(self.support).view(1, -1, 1)
+        else:
+            raise ValueError
+            features = ...  # sample from policy
+        return self.support[self.model.get_best_action(features).squeeze().item()]
 
     def get_duel_actions(self, features: Tensor) -> Tuple[LongTensor]:
         del features  # No context.
@@ -181,6 +193,7 @@ class Evaluator:
                 loop=0,
             )
             [os.remove(fn) for fn in fns]
+            print(os.path.join(self.save_dir, f"rm_trajectory.gif"))
 
 
 def insert_to_buffer(buffer: UniformBuffer, dueling_actions, feedback):
@@ -199,28 +212,49 @@ def insert_to_buffer(buffer: UniformBuffer, dueling_actions, feedback):
 def main(
     total_budget: int = 1000,
     n_sample_plot: int = 200,
-    num_ensemble: int = 10,
-    num_bin: int = 500,
+    num_ensemble: int = 5,
+    num_bin: int = 300,
     strategy: Literal[
-        "EnnDoubleTS", "EnnInfoMax", "EnnTSInfoMax", "EnnPE", "EnnDuelingTS"
+        "EnnDTS", "EnnInfoMax", "EnnTSInfoMax", "EnnDuelingTS"
     ] = "EnnTSInfoMax",
     clash_strategy: Literal["random", "top2"] = "random",
     optimization: Literal["oracle", "policy"] = "oracle",
     save_dir: str = "output/toy",
     tag: str = "",
     format: str = "png",
-    enn_lambda: float = 0.1,
+    enn_lambda: float = 0,
+    track: bool = False,
+    bt_sample: bool = False,
     pi_ref_mu: float = -0.5,
     pi_ref_std: float = 0.35,
 ):
+    wandb.init(
+        project="bandit_toy",
+        name=f"{strategy}",
+        config={
+            "strategy": strategy,
+            "clash_strategy": clash_strategy,
+            "total_budget": total_budget,
+            "n_sample_plot": n_sample_plot,
+            "num_ensemble": num_ensemble,
+            "num_bin": num_bin,
+            "reward_function_version": reward_function_version,
+            "bt_sample": bt_sample,
+        },
+        mode="online" if track else "disabled",
+    )
     save_dir = os.path.join(
-        save_dir, strategy, clash_strategy if strategy == "EnnDoubleTS" else "", tag
+        save_dir,
+        strategy,
+        clash_strategy if strategy == "EnnDTS" else "",
+        tag,
     )
     os.makedirs(save_dir, exist_ok=True)
 
     # Plot the oracle reward function.
     y_plot = np.linspace(-3, 3, n_sample_plot)
     r_plot = reward_function(y_plot)
+    oracle_best_r = r_plot.max()
     plt.figure()
     plt.plot(y_plot, r_plot, label="reward")
     plt.xlabel("y")
@@ -235,7 +269,10 @@ def main(
         for j in range(n_sample_plot):
             r1 = reward_function(y_plot[i])
             r2 = reward_function(y_plot[j])
-            z = torch.tensor(r1 - r2).sigmoid().numpy()
+            if bt_sample:
+                z = torch.tensor(r1 - r2).sigmoid().numpy()
+            else:
+                z = r1 > r2
             preference_landscape[i, j] = z
 
     plt.figure()
@@ -275,19 +312,50 @@ def main(
     evaluator.visualize_reward_model(
         step=0, model=model, history_actions=[], format=format
     )
+    cumulative_regret = 0
+    model.found_optimal = 0
+
+    def log_regrets(num_interaction, r1, r2, model, cumulative_regret):
+        regret = (oracle_best_r - (r1 + r2) / 2).sum()
+        cumulative_regret += regret
+        best_a_pred = model.get_best_action(None)
+        best_r_pred = reward_function(best_a_pred)
+        anytime_regret = (oracle_best_r - best_r_pred).mean()
+        optimal_distance = np.linalg.norm(best_a_pred - 1)
+        if optimal_distance < 0.5:
+            model.found_optimal = 1
+        wandb.log(
+            {
+                "query_step": num_interaction,
+                "cumulative_regret": cumulative_regret,
+                "anytime_regret": anytime_regret,
+                "optimal_distance": optimal_distance,
+                "found_optimal": model.found_optimal,
+            }
+        )
+        return cumulative_regret
+
     while num_interaction < total_budget:
         if num_interaction == 0:
             # Random explore to get the first batch.
             dueling_actions = model.explore()
-            feedback = reward_function(dueling_actions[:, 0]) > reward_function(
-                dueling_actions[:, 1]
-            )
+            r1 = reward_function(dueling_actions[:, 0])
+            r2 = reward_function(dueling_actions[:, 1])
+            if bt_sample:
+                prob = torch.tensor(r1 - r2).sigmoid()
+                feedback = torch.bernoulli(prob).numpy()
+            else:
+                feedback = r1 > r2
             insert_to_buffer(buffer, dueling_actions, feedback)
             num_interaction += len(dueling_actions)
+            cumulative_regret = log_regrets(
+                num_interaction, r1, r2, model, cumulative_regret
+            )
             continue
 
         # Query the environment.
         dueling_actions, clash = model.get_duel_actions(None)
+
         if clash:
             if clash_strategy == "random":
                 dueling_actions[0, 1] = np.random.choice(model.support)
@@ -297,8 +365,11 @@ def main(
         # BT preference model.
         r1 = reward_function(dueling_actions[:, 0])
         r2 = reward_function(dueling_actions[:, 1])
-        prob = torch.tensor(r1 - r2).sigmoid()
-        feedback = torch.bernoulli(prob).numpy()
+        if bt_sample:
+            prob = torch.tensor(r1 - r2).sigmoid()
+            feedback = torch.bernoulli(prob).numpy()
+        else:
+            feedback = r1 > r2
 
         insert_to_buffer(buffer, dueling_actions, feedback)
         init_clash.append(clash)
@@ -312,9 +383,11 @@ def main(
                 {
                     "eval/rm_acc": evaluator.evaluate_rm_accuracy(model),
                     "actor/init_clash_ratio": np.mean(init_clash),
+                    "query_step": num_interaction,
                 }
             )
             print(num_interaction, info)
+            wandb.log(info)
             evaluator.visualize_reward_model(
                 num_interaction,
                 model,
@@ -325,6 +398,12 @@ def main(
             init_clash.clear()
 
         num_interaction += 1
+
+        cumulative_regret = log_regrets(
+            num_interaction, r1, r2, model, cumulative_regret
+        )
+
+    wandb.finish()
 
 
 if __name__ == "__main__":

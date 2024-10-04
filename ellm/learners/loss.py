@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ellm.types import DAPAlgo
+
 
 class DPOLoss(nn.Module):
     """
@@ -11,12 +13,15 @@ class DPOLoss(nn.Module):
     """
 
     def __init__(
-        self, beta: float, label_smoothing: float = 0.0, ipo: bool = False
+        self,
+        beta: float,
+        label_smoothing: float = 0.0,
+        dap_algo=DAPAlgo.DPO,
     ) -> None:
         super().__init__()
         self.beta = beta
         self.label_smoothing = label_smoothing
-        self.ipo = ipo
+        self.dap_algo = dap_algo
 
     def forward(
         self,
@@ -30,10 +35,12 @@ class DPOLoss(nn.Module):
         ref_logratios = reference_chosen_logps - reference_rejected_logps
         logits = pi_logratios - ref_logratios
 
-        if self.ipo:
+        if self.dap_algo == DAPAlgo.IPO:
             losses = (
                 logits - 1 / (2 * self.beta)
             ) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
+        elif self.dap_algo == DAPAlgo.SLiC:
+            losses = torch.relu(1 - self.beta * logits)
         else:
             # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
             losses = (

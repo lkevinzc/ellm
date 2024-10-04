@@ -1,4 +1,5 @@
 import argparse
+import math
 
 from ellm.types import DAPAlgo
 
@@ -12,8 +13,8 @@ def get_default_parser():
     parser.add_argument(
         "--dap_algo",
         type=str,
-        choices=["DPO", "IPO", "SimPO"],
-        default="SimPO",
+        choices=["DPO", "IPO", "SLiC", "SimPO"],
+        default="DPO",
         help="Direct alignment from preference method.",
     )
 
@@ -77,21 +78,27 @@ def get_default_parser():
 
     # Model-based
     parser.add_argument("--model_rollout", action="store_true")
-    parser.add_argument("--max_model_data_ratio", type=float, default=0.5)
-    parser.add_argument("--random_model_data", action="store_true")
-    parser.add_argument("--trust_region_scale", type=float, default=1.0)
+    parser.add_argument("--max_model_data_ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--model_data_strategy",
+        type=str,
+        choices=["random", "epistemic_uct", "total_uct"],
+        default="random",
+        help="Types of model data selection.",
+    )
     parser.add_argument("--burn_in_period", type=int, default=5)
+    parser.add_argument("--pure_model_based", action="store_true")
 
     parser.add_argument(
         "--exp_method",
         type=str,
         choices=[
             "no",
-            "EnnDoubleTS",
-            "EnnPE",
-            "EnnDuelingTS",
+            "EnnDTS",
             "EnnInfoMax",
             "EnnTSInfoMax",
+            "EnnDuelingTS",
+            "EnnPassive",
         ],
         default="no",
         help="Types of exploration.",
@@ -105,19 +112,26 @@ def get_default_parser():
     parser.add_argument("--rm_hidden_dim", type=int, default=128)
     parser.add_argument("--rm_act_fn", type=str, default="relu")
 
-    parser.add_argument("--rm_sgd_steps", type=int, default=1)
+    parser.add_argument("--rm_sgd_steps", type=int, default=5)
     parser.add_argument("--rm_fixed_reg", action="store_true")
+    parser.add_argument("--rm_train_budget", type=int, default=-1)
 
     ## EnnDTS
     parser.add_argument("--num_ensemble", type=int, default=20)
     parser.add_argument("--enn_max_try", type=int, default=-1)
-    parser.add_argument("--enn_lambda", type=float, default=0.1)
+    parser.add_argument("--enn_lambda", type=float, default=0.5)
+
+    ## LmcFGTS
+    parser.add_argument("--lmc_temp", type=float, default=0.01)
+    parser.add_argument("--lmc_a", type=float, default=1)
+    parser.add_argument("--lmc_asgld", action="store_true")
+    parser.add_argument("--reg_lambda", type=float, default=10)
 
     # Evaluation params
     parser.add_argument("--online_evaluation", action="store_true")
     parser.add_argument("--best_of_n_eval", action="store_true")
     parser.add_argument("--num_bon", type=int, default=1)
-    parser.add_argument("--bon_temperature", type=float, default=0.3)
+    parser.add_argument("--bon_temperature", type=float, default=0.7)
     parser.add_argument("--eval_batch_size", type=int, default=-1)
 
     # Generation params
@@ -221,4 +235,6 @@ def default_args_validation(args: argparse.Namespace):
         args.enn_max_try = args.num_ensemble
     if args.eval_batch_size == -1:
         args.eval_batch_size = args.micro_rollout_batch_size
+    if args.rm_train_budget == -1:
+        args.rm_train_budget = math.inf
     return args

@@ -18,6 +18,7 @@ def run_xpo(args):
 if __name__ == "__main__":
     parser = get_default_parser()
     parser.add_argument("--xpo_alpha", type=float, default=5e-6)
+    parser.add_argument("--xpo_offload_actor_ref", action="store_true")
 
     args = default_args_validation(parser.parse_args())
     run_xpo(args)

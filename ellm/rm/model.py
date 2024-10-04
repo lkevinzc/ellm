@@ -8,8 +8,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 
-from ellm.rm.networks import EnsembleModel
-from ellm.rm.uncertainty import kl_ensemble
+from ellm.rm import uncertainty
+from ellm.rm.networks import EnsembleModel, MLPModel
+from ellm.rm.optim import LAdam
 from ellm.utils.buffer import UniformBuffer
 
 
@@ -192,24 +193,10 @@ class EnnDoubleTS(RewardModel):
         }
 
 
-class EnnPE(EnnDoubleTS):
-    """Pure Exploration based on uncertainty measure."""
-
-    @torch.no_grad
-    def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
-        rewards = self.get_rewards(features)  # (E, M, N, 1)
-
-        _, M, N, _ = rewards.shape
-        # pref_logits = rewards - einops.rearrange(
-        #     rewards, "e m n 1 -> e m 1 n"
-        # )  # (E, M, N, N')
-        # pref_uncertainty = torch.tril(pref_logits.std(dim=0))
-
-        pref_uncertainty = kl_ensemble(rewards)  # (M, N, N')
-        flatten_idx = pref_uncertainty.view(M, -1).argmax(-1)
-        first_actions = flatten_idx // N
-        second_actions = flatten_idx % N
-        return rewards, first_actions.view(M, 1), second_actions.view(M, 1)
+class EnnInfoMax(EnnDTS):
+    def __init__(self, args: Namespace) -> None:
+        super().__init__(args)
+        self.uct_fn = uncertainty.logits_variance
 
 
 class EnnInfoMax(EnnDoubleTS):
@@ -217,19 +204,52 @@ class EnnInfoMax(EnnDoubleTS):
     def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
         rewards = self.get_rewards(features)  # (E, M, N, 1)
         _, M, N, _ = rewards.shape
-        pref_logits = rewards - einops.rearrange(
-            rewards, "e m n 1 -> e m 1 n"
-        )  # (E, M, N, N')
-        pref_uncertainty = torch.tril(pref_logits.std(dim=0))
-
-        # pref_uncertainty = variance_ensemble(rewards)
+        pref_uncertainty = self.uct_fn(rewards)
         flatten_idx = pref_uncertainty.view(M, -1).argmax(-1)
         first_actions = flatten_idx // N
         second_actions = flatten_idx % N
         return rewards, first_actions.view(M, 1), second_actions.view(M, 1)
 
 
-class EnnTSInfoMax(EnnDoubleTS):
+class EnnDuelingTS(EnnDTS):
+    def __init__(self, args: Namespace) -> None:
+        super().__init__(args)
+        self.uct_fn = uncertainty.logits_variance
+
+    @torch.no_grad
+    def get_duel_actions(
+        self, features: torch.Tensor
+    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
+        rewards = self.get_rewards(features)  # (E, M, N, 1)
+        E, M, _, _ = rewards.shape
+        best_actions = rewards.argmax(dim=2)  # (E, M, 1)
+        # sample without replacement
+        s1 = list(range(E))
+        random.shuffle(s1)
+        first_actions = best_actions[s1[0]]
+
+        pref_uncertainty = self.uct_fn(rewards)
+
+        second_actions = torch.stack(
+            [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
+        ).view(M, 1)
+
+        return rewards, first_actions, second_actions
+
+
+class EnnPassive(EnnDTS):
+    """Learning RM but not for sampling, only for BoN generation."""
+
+    @torch.no_grad
+    def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
+        M, _, _ = features.shape  # M, N, d
+        rewards = self.get_rewards(features)
+        first_actions = torch.zeros((M, 1), device=features.device).long()
+        second_actions = torch.ones((M, 1), device=features.device).long()
+        return rewards, first_actions, second_actions
+
+
+class EnnTSInfoMax(EnnDTS):
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor

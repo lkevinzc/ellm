@@ -1,0 +1,191 @@
+{
+    "dpo": {
+        "1b": {
+            "offline": [
+                "skyworkrm_dpo_offline_0921T01:12",
+                "skyworkrm_dpo_offline_0921T00:15",
+                "skyworkrm_dpo_offline_0917T07:16"
+            ],
+            "online": [
+                "skyworkrm_dpo_online_0920T16:13",
+                "skyworkrm_dpo_online_0920T15:15",
+                "skyworkrm_dpo_online_0917T08:29"
+            ],
+            "sea": [
+                "skyworkrm_dpo_sea_0925T15:53",
+                "skyworkrm_dpo_sea_0925T11:49",
+                "skyworkrm_dpo_sea_0925T07:47"
+            ],
+            "apl": [
+                "skyworkrm_apl_0921T00:20",
+                "skyworkrm_apl_0920T15:13",
+                "skyworkrm_apl_0917T07:44"
+            ],
+            "xpo": [
+                "skyworkrm_xpo_0921T00:24",
+                "skyworkrm_xpo_0920T15:11",
+                "skyworkrm_xpo_0917T07:41"
+            ]
+        },
+        "2.8b": {
+            "offline": [
+                "skyworkrm_dpo_offline_0921T06:59",
+                "skyworkrm_dpo_offline_0921T03:35",
+                "skyworkrm_dpo_offline_0918T02:32"
+            ],
+            "online": [
+                "skyworkrm_dpo_online_0921T06:59",
+                "skyworkrm_dpo_online_0921T03:38",
+                "skyworkrm_dpo_online_0918T01:53"
+            ],
+            "sea": [
+                "skyworkrm_dpo_sea_lmd0.2_0925T20:10",
+                "skyworkrm_dpo_sea_lmd0.2_0926T05:34",
+                "skyworkrm_dpo_sea_lmd0.2_0926T10:32"
+            ],
+            "apl": [
+                "skyworkrm_apl_0921T06:54",
+                "skyworkrm_apl_0921T06:40",
+                "skyworkrm_apl_0921T00:30"
+            ],
+            "xpo": [
+                "skyworkrm_xpo_0921T07:00",
+                "skyworkrm_xpo_0921T02:39",
+                "skyworkrm_xpo_0921T00:29"
+            ]
+        },
+        "6.9b": {
+            "offline": [
+                "skyworkrm_dpo_offline_0921T21:17",
+                "skyworkrm_dpo_offline_0921T17:56",
+                "skyworkrm_dpo_offline_0918T03:59"
+            ],
+            "online": [
+                "skyworkrm_dpo_online_0921T21:16",
+                "skyworkrm_dpo_online_0921T17:50",
+                "skyworkrm_dpo_online_0918T04:02"
+            ],
+            "sea": [
+                "skyworkrm_dpo_sea_0926T03:44",
+                "skyworkrm_dpo_sea_0925T20:05",
+                "skyworkrm_dpo_sea_0925T12:16"
+            ],
+            "apl": [
+                "skyworkrm_apl_0922T04:08",
+                "skyworkrm_apl_0922T03:48",
+                "skyworkrm_apl_0921T18:00"
+            ],
+            "xpo": [
+                "skyworkrm_xpo_0922T14:48",
+                "skyworkrm_xpo_0922T14:37",
+                "skyworkrm_xpo_0922T14:30"
+            ]
+        }
+    },
+    "ipo": {
+        "1b": {
+            "offline": [
+                "skyworkrm_ipo_offline_0921T12:45",
+                "skyworkrm_ipo_offline_0921T11:48",
+                "skyworkrm_ipo_offline_0917T14:05"
+            ],
+            "online": [
+                "skyworkrm_ipo_online_0921T12:46",
+                "skyworkrm_ipo_online_0921T11:47",
+                "skyworkrm_ipo_online_0917T14:06"
+            ],
+            "sea": [
+                "skyworkrm_ipo_sea_0925T15:57",
+                "skyworkrm_ipo_sea_0925T11:50",
+                "skyworkrm_ipo_sea_0925T07:42"
+            ]
+        },
+        "2.8b": {
+            "offline": [
+                "skyworkrm_ipo_offline_beta05_0927T09:39",
+                "skyworkrm_ipo_offline_beta05_0927T08:36",
+                "skyworkrm_ipo_offline_beta05_0927T07:33"
+            ],
+            "online": [
+                "skyworkrm_ipo_onlinebeta05_0927T09:50",
+                "skyworkrm_ipo_onlinebeta05_0927T04:31",
+                "skyworkrm_ipo_onlinebeta05_0927T02:36"
+            ],
+            "sea": [
+                "skyworkrm_ipo_sea_beta0.5_0926T13:03",
+                "skyworkrm_ipo_sea_beta0.5_0926T08:00",
+                "skyworkrm_ipo_sea_beta0.5_0926T02:42"
+            ]
+        },
+        "6.9": {
+            "offline": [
+                "skyworkrm_ipo_offline_beta0.3_0928T20:07",
+                "skyworkrm_ipo_offline_beta0.3_0928T23:53",
+                "skyworkrm_ipo_offline_beta0.3_0929T05:09"
+            ],
+            "online": [
+                "skyworkrm_ipo_online_beta0.3_0928T20:15",
+                "skyworkrm_ipo_online_beta0.3_0928T15:21",
+                "skyworkrm_ipo_online_beta0.3_0928T13:58"
+            ],
+            "sea": [
+                "skyworkrm_ipo_sea_beta0.3_0928T12:09",
+                "skyworkrm_ipo_sea_beta0.3_0928T02:13",
+                "skyworkrm_ipo_sea_beta0.3_0929T08:31"
+            ]
+        }
+    },
+    "slic": {
+        "1b": {
+            "offline": [
+                "skyworkrm_slic_offline_0928T10:24",
+                "skyworkrm_slic_offline_0928T07:06",
+                "skyworkrm_slic_offline_0928T06:13"
+            ],
+            "online": [
+                "skyworkrm_slic_online_0928T08:01",
+                "skyworkrm_slic_online_0928T07:08",
+                "skyworkrm_slic_online_0928T06:14"
+            ],
+            "sea": [
+                "skyworkrm_slic_sea_0928T06:14",
+                "skyworkrm_slic_sea_0928T10:13",
+                "skyworkrm_slic_sea_0928T20:06"
+            ]
+        },
+        "2.8b": {
+            "offline": [
+                "skyworkrm_slic_offline_0928T13:58",
+                "skyworkrm_slic_offline_0928T11:29",
+                "skyworkrm_slic_offline_0928T10:26"
+            ],
+            "online": [
+                "skyworkrm_slic_online_0928T14:22",
+                "skyworkrm_slic_online_0928T13:14",
+                "skyworkrm_slic_online_0928T10:28"
+            ],
+            "sea": [
+                "skyworkrm_slic_sea_0928T06:19",
+                "skyworkrm_slic_sea_0928T20:05",
+                "skyworkrm_slic_sea_0929T08:22"
+            ]
+        },
+        "6.9": {
+            "offline": [
+                "skyworkrm_slic_offline_0928T15:01",
+                "skyworkrm_slic_offline_0928T17:57",
+                "skyworkrm_slic_offline_0928T20:49"
+            ],
+            "online": [
+                "skyworkrm_slic_online_0928T21:33",
+                "skyworkrm_slic_online_0928T18:15",
+                "skyworkrm_slic_online_0928T15:02"
+            ],
+            "sea": [
+                "skyworkrm_slic_sea_0928T15:01",
+                "skyworkrm_slic_sea_0928T22:43",
+                "skyworkrm_slic_sea_0929T06:18"
+            ]
+        }
+    }
+}

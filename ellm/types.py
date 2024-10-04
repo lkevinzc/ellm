@@ -10,7 +10,8 @@ Metric = Dict[str, Any]
 class DAPAlgo(Enum):
     DPO = 0
     IPO = 1
-    SimPO = 2
+    SLiC = 2
+    SimPO = 3
 
 
 @dataclass

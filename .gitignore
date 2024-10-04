@@ -164,4 +164,7 @@ results
 output
 *cache
 cmd
-notebooks
+# notebooks
+*.csv
+*.pdf
+*.ttf
