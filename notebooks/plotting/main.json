@@ -120,7 +120,8 @@
         "6.9": {
             "offline": [
                 "skyworkrm_ipo_offline_beta0.3_0928T20:07",
-                "skyworkrm_ipo_offline_beta0.3_0928T23:53"
+                "skyworkrm_ipo_offline_beta0.3_0928T23:53",
+                "skyworkrm_ipo_offline_beta0.3_0929T05:09"
             ],
             "online": [
                 "skyworkrm_ipo_online_beta0.3_0928T20:15",
@@ -129,7 +130,8 @@
             ],
             "sea": [
                 "skyworkrm_ipo_sea_beta0.3_0928T12:09",
-                "skyworkrm_ipo_sea_beta0.3_0928T02:13"
+                "skyworkrm_ipo_sea_beta0.3_0928T02:13",
+                "skyworkrm_ipo_sea_beta0.3_0929T08:31"
             ]
         }
     },
@@ -164,7 +166,8 @@
             ],
             "sea": [
                 "skyworkrm_slic_sea_0928T06:19",
-                "skyworkrm_slic_sea_0928T20:05"
+                "skyworkrm_slic_sea_0928T20:05",
+                "skyworkrm_slic_sea_0929T08:22"
             ]
         },
         "6.9": {
@@ -179,7 +182,9 @@
                 "skyworkrm_slic_online_0928T15:02"
             ],
             "sea": [
-                "skyworkrm_slic_sea_0928T15:01"
+                "skyworkrm_slic_sea_0928T15:01",
+                "skyworkrm_slic_sea_0928T22:43",
+                "skyworkrm_slic_sea_0929T06:18"
             ]
         }
     }
