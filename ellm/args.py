@@ -144,7 +144,7 @@ def get_default_parser():
     parser.add_argument("--save_path", type=str, default="./output")
     parser.add_argument("--save_steps", type=int, default=-1)
     parser.add_argument("--logging_steps", type=int, default=1)
-    parser.add_argument("--eval_steps", type=int, default=80)
+    parser.add_argument("--eval_steps", type=int, default=20)
     parser.add_argument("--eval_query_interval", type=int, default=-1)
     parser.add_argument("--ckpt_path", type=str, default="./ckpt/checkpoints_dpo")
     parser.add_argument("--max_ckpt_num", type=int, default=3)

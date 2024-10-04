@@ -19,7 +19,6 @@ from ellm.utils.buffer import UniformBuffer
 
 reward_function_version = "3"
 
-
 def reward_function(y):
     mean, std_dev = -1, 0.5
     component_1 = (1 / (np.sqrt(2 * np.pi * std_dev**2))) * np.exp(
@@ -41,9 +40,9 @@ def reward_function(y):
     return 7 * (component_1_left + component_1_right + component_2)
 
 
-class BTRewardModel(reward_model.EnnDTS):
+class BTRewardModel(reward_model.EnnDoubleTS):
     def __init__(
-        self, model_cls: Type[reward_model.EnnDTS], args: Namespace, num_bin: int
+        self, model_cls: Type[reward_model.EnnDoubleTS], args: Namespace, num_bin: int
     ) -> None:
         super().__init__(args)
         self.model = model_cls(args)
@@ -305,7 +304,6 @@ def main(
 
     # Construct buffer.
     buffer = UniformBuffer(total_budget)
-    # buffer
 
     # Online dueling bandit loop.
     evaluator = Evaluator(save_dir, y_plot, num_bin)
