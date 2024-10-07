@@ -9,8 +9,7 @@ import torch.nn.functional as F
 from torch import nn, optim
 
 from ellm.rm import uncertainty
-from ellm.rm.networks import EnsembleModel, MLPModel
-from ellm.rm.optim import LAdam
+from ellm.rm.networks import EnsembleModel
 from ellm.utils.buffer import UniformBuffer
 
 
