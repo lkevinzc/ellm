@@ -74,7 +74,7 @@ class PairWiseLoss(nn.Module):
         return (loss * mask).mean()
 
 
-class EnnDoubleTS(RewardModel):
+class EnnDTS(RewardModel):
     """Double Thompson Sampling based on ensemble."""
 
     @classmethod
@@ -197,8 +197,6 @@ class EnnInfoMax(EnnDTS):
         super().__init__(args)
         self.uct_fn = uncertainty.logits_variance
 
-
-class EnnInfoMax(EnnDoubleTS):
     @torch.no_grad
     def get_duel_actions(self, features: torch.Tensor) -> Tuple[torch.LongTensor]:
         rewards = self.get_rewards(features)  # (E, M, N, 1)
@@ -249,6 +247,7 @@ class EnnPassive(EnnDTS):
 
 
 class EnnTSInfoMax(EnnDTS):
+
     @torch.no_grad
     def get_duel_actions(
         self, features: torch.Tensor
@@ -267,12 +266,11 @@ class EnnTSInfoMax(EnnDTS):
             if -1 not in second_actions:
                 break
 
-        # pref_logits = rewards - einops.rearrange(
-        #     rewards, "e m n 1 -> e m 1 n"
-        # )  # (E, M, N, N')
-        # pref_uncertainty = pref_logits.std(dim=0)
-        # pref_uncertainty = variance_ensemble(rewards)
-        pref_uncertainty = kl_ensemble(rewards)
+        # TODO remove this ugly half-half later because we will not do fg-ts comparison; AND remove fg-ts related codes
+        pref_logits = rewards - einops.rearrange(
+            rewards, "e m n 1 -> e m 1 n"
+        )  # (E, M, N, N')
+        pref_uncertainty = pref_logits.std(dim=0)
 
         second_actions_info_max = torch.stack(
             [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
@@ -281,28 +279,6 @@ class EnnTSInfoMax(EnnDTS):
         second_actions = torch.where(
             second_actions == -1, second_actions_info_max, second_actions
         )
-        return rewards, first_actions, second_actions
-
-
-class EnnDuelingTS(EnnDoubleTS):
-
-    @torch.no_grad
-    def get_duel_actions(
-        self, features: torch.Tensor
-    ) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor]:
-        rewards = self.get_rewards(features)  # (E, M, N, 1)
-        E, M, _, _ = rewards.shape
-        best_actions = rewards.argmax(dim=2)  # (E, M, 1)
-        # sample without replacement
-        s1 = list(range(E))
-        random.shuffle(s1)
-        first_actions = best_actions[s1[0]]
-
-        pref_uncertainty = kl_ensemble(rewards)  # (M, N, N')
-        second_actions = torch.stack(
-            [pref_uncertainty[i][first_actions[i]].argmax() for i in range(M)], dim=0
-        ).view(M, 1)
-
         return rewards, first_actions, second_actions
 
 

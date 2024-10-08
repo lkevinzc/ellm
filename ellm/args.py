@@ -33,6 +33,7 @@ def get_default_parser():
         choices=[2, 3, 4, 5, 8],
         default=5,
     )
+    parser.add_argument("--collocate", action="store_true")
     parser.add_argument(
         "--shm_size_mb",
         type=int,

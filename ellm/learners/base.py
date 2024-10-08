@@ -358,7 +358,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 )
 
         if self.strategy.is_rank_0():
-            self._wandb.finish()
+            self._wandb.finish() if self._wandb else None
             lp.stop()
 
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):

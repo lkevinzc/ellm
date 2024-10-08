@@ -27,12 +27,18 @@ def get_program(
     elif args.total_gpus == 4:
         actor_gpus = [0, 1]
         learner_gpus = [2, 3]
+        if args.collocate:
+            actor_gpus = [0, 1, 2]
+            learner_gpus = [3, 2, 1]
     elif args.total_gpus == 5:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 3, 2, 1]
     elif args.total_gpus == 8:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 5, 6, 7]
+        if args.collocate:
+            actor_gpus = [0, 1, 2, 3, 4, 5, 6]
+            learner_gpus = [7, 6, 5, 4, 3, 2, 1]
 
     # IPC.
     ipc_server = program.add_node(
