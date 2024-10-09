@@ -108,8 +108,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         # prepare datasets
         self.prepare_data(strategy, tokenizer)
         strategy.print("Prompt dataset example:")
-        strategy.print("Processed:", self.prompts_dataset[0][0])
-        strategy.print("Raw:", self.prompts_dataset[0][1])
+        strategy.print(self.prompts_dataset[0])
         strategy.print("Prompt dataset len:", len(self.prompts_dataset))
 
         self.eval_input_key = args.eval_input_key or args.input_key
@@ -359,6 +358,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self.args.generate_max_length,
             self.strategy,
         )
+        if learning_round == 1:
+            self.strategy.print("Training example")
+            self.strategy.print(dataset[0])
+
         dataloader = DataLoader(
             dataset,
             batch_size=self.args.micro_train_batch_size,

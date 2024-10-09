@@ -30,7 +30,7 @@ class OfflineDAPLearner(DAPLearner):
         self.args = args
         self._init(args, actors=[])
 
-        self.eval_generate_args = GenerationConfig(
+        self.eval_generate_config = GenerationConfig(
             max_new_tokens=args.eval_generate_max_length,
             temperature=args.eval_temperature,
             top_p=args.eval_top_p,
@@ -91,9 +91,7 @@ class OfflineDAPLearner(DAPLearner):
             all_shards
         )  # needed to calculate lr scheduler
         self.prompts_dataloader = None
-        _, self.eval_prompts_dataset = get_datasets(
-            tokenizer, self.strategy, eval_only=True
-        )
+        _, self.eval_prompts_dataset = get_datasets(tokenizer, strategy, eval_only=True)
         self.eval_prompts_dataloader = DataLoader(
             self.eval_prompts_dataset,
             batch_size=strategy.args.eval_batch_size,
@@ -103,18 +101,17 @@ class OfflineDAPLearner(DAPLearner):
         )
 
     def run(self):
-        steps = 1
+        self.steps = 0
+        early_stop = False
         self.start_time = time.time()
+
         self.actor_info = {}
         bs = self.args.micro_rollout_batch_size
 
         if not self.strategy.args.debug:
-            self.save_logs_and_checkpoints(
-                self.args,
-                self.policy_sgd_step,
-                {},
-            )
+            self.save_logs_and_checkpoints({}, eval=True)
 
+        self.steps = 1
         for p_ep in range(self.args.num_prompt_epoch):
             progress_bar = tqdm(
                 range(len(self.all_buffer) // bs),
@@ -128,22 +125,20 @@ class OfflineDAPLearner(DAPLearner):
                 self.prompt_consumed += bs
                 self.query_step += bs
 
-                if steps % self.update_interval == 0:
-                    train_info = self.preference_learning(steps // self.update_interval)
-
-                    self.save_logs_and_checkpoints(
-                        self.args,
-                        steps,
-                        train_info,
+                if self.steps % self.update_interval == 0:
+                    train_info = self.preference_learning(
+                        self.steps // self.update_interval
                     )
 
+                    self.save_logs_and_checkpoints(train_info)
+
                 progress_bar.update()
-                steps += 1
+                self.steps += 1
             self.prompt_epoch = p_ep + 1
             # Reorder data for another epoch.
             random.Random(self.args.seed + p_ep).shuffle(self.all_buffer)
 
-        self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
+        self.save_logs_and_checkpoints(train_info, eval=True)
 
         if self.strategy.is_rank_0():
             self._wandb.finish() if self._wandb else None
@@ -162,6 +157,7 @@ class OfflineDAPLearner(DAPLearner):
             prompts = []
             responses = []
             references = []
+            progress_bar = tqdm(range(dataloader.__len__()))
             for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
                 dataloader
             ):
@@ -169,7 +165,7 @@ class OfflineDAPLearner(DAPLearner):
                 prompts.extend(batch_prompts)
                 references.extend(refs)
                 batch = self.tokenizer(
-                    processed_prompts,
+                    batch_processed_prompts,
                     return_tensors="pt",
                     max_length=self.args.prompt_max_length,
                     padding=True,
@@ -177,15 +173,17 @@ class OfflineDAPLearner(DAPLearner):
                 )
                 inputs = tree.map_structure(lambda x: x.to(device), batch)
                 sequences = self.model.generate(
-                    **inputs, **self.eval_generate_args
+                    **inputs, generation_config=self.eval_generate_config
                 ).cpu()
                 completions = self.tokenizer.batch_decode(
                     sequences[:, batch["input_ids"].shape[1] :],
                     skip_special_tokens=True,
                 )
                 completions = [c.strip() for c in completions]
-                print(processed_prompts[0], completions[0])
+                print("prompt", batch_processed_prompts[0])
+                print("response", completions[0])
                 responses.extend(completions)
+                progress_bar.update()
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)

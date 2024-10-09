@@ -43,7 +43,7 @@ def get_datasets(tokenizer, strategy, eval_only=False):
     if args.eval_data:
         strategy.print(f"loading eval data {args.eval_data}")
         if "@" in args.eval_data:
-            name, path = args.eval_data.splot("@")
+            name, path = args.eval_data.split("@")
         else:
             name, path = None, args.eval_data
         eval_dataset = load_dataset(path, name, trust_remote_code=True)
