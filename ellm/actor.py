@@ -3,6 +3,7 @@ import time
 from typing import List
 from warnings import warn
 
+import einops
 import numpy as np
 import torch
 import vllm
@@ -174,7 +175,7 @@ class Actor:
         info = dict()
 
         # step 1. generate
-        candidates = self.generate(prompts, self.sampling_params)
+        all_candidates = self.generate(prompts, self.sampling_params)
 
         # step 2a. optional selection
         results = None
@@ -182,8 +183,10 @@ class Actor:
             # print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
             results: ExplorationResults
-            results = self.explorer.select(prompts, candidates)
+            results = self.explorer.select(prompts, all_candidates)
             candidates = results.dueling_candidates
+        else:
+            candidates = all_candidates
 
         # step 2b. optional online eval
         if self.enable_online_evaluation:
@@ -242,12 +245,38 @@ class Actor:
         if results is not None:
             info.update(results.info)
 
+        chosen_responses = [candidates[i][chosen[i]] for i in range(len(prompts))]
+        rejected_responses = [candidates[i][rejected[i]] for i in range(len(prompts))]
+        if self.args.policy_for_exploration:
+            logging.info("Replacing data for policy training...")
+            chosen_responses = []
+            rejected_responses = []
+            # Recompute chosen & rejected only for policy learning
+            rewards = results.all_rewards
+            reward_margin = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
+            E, M, _, _ = reward_margin.shape
+            random_belief_reward_margin = reward_margin[
+                torch.randint(E, (M,)), torch.arange(M)
+            ]  # M, N, N'
+            for i in range(M):
+                margin_i = random_belief_reward_margin[i]
+                margin_i_abs = torch.abs(margin_i)
+                tr_pairs = torch.where(margin_i_abs == margin_i_abs.max())
+                sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+                candidate_1, candidate_2 = tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]
+                if margin_i[candidate_1, candidate_2] > 0:
+                    rnd_chosen, rnd_rejected = candidate_1, candidate_2
+                else:
+                    rnd_chosen, rnd_rejected = candidate_2, candidate_1
+                chosen_responses.append(all_candidates[i][rnd_chosen])
+                rejected_responses.append(all_candidates[i][rnd_rejected])
+
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],
                 chosen_id=chosen[i],
-                chosen_response=candidates[i][chosen[i]],
-                rejected_response=candidates[i][rejected[i]],
+                chosen_response=chosen_responses[i],
+                rejected_response=rejected_responses[i],
                 chosen_feature=(
                     candidate_features[i][chosen[i]] if self.learning_rm else None
                 ),

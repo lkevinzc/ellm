@@ -83,6 +83,7 @@ def get_default_parser():
     parser.add_argument("--learn_rm_only", action="store_true")
 
     # Model-based
+    parser.add_argument("--policy_for_exploration", action="store_true")
     parser.add_argument("--model_rollout", action="store_true")
     parser.add_argument("--max_model_data_ratio", type=float, default=0.2)
     parser.add_argument(

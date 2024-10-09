@@ -21,6 +21,7 @@ class ExplorationResults:
     candidate_features: torch.Tensor
     init_clash: List[bool]
     is_model_data: List[bool]
+    all_rewards: torch.Tensor
     info: Metric
 
 
@@ -120,7 +121,7 @@ class Explorer(ExplorerBase):
             ExplorationResults: Pair of responses per prompt (and features), M -> 2
         """
         (
-            _,
+            rewards,
             dueling_candidates,
             features,
             selected_candidate_indices,
@@ -139,6 +140,7 @@ class Explorer(ExplorerBase):
             ),
             init_clash=init_clash.tolist(),
             is_model_data=[False] * len(prompts),
+            all_rewards=rewards,
             info=info,
         )
 
@@ -247,13 +249,6 @@ class Explorer(ExplorerBase):
         features = torch.cat(features, dim=0)  # (M*N, d)
         features = features.view(M, N, -1)
         return features
-
-
-class ModelBasedExplorer2(Explorer):
-    def __init__(
-        self, reward_model: RewardModel, rm_backbone: RMBackbone, args: Namespace
-    ) -> None:
-        super().__init__(reward_model, rm_backbone, args)
 
 
 class ModelBasedExplorer(Explorer):
@@ -516,6 +511,7 @@ class ModelBasedExplorer(Explorer):
             ),
             init_clash=init_clash.tolist(),
             is_model_data=is_model_data.astype("bool").tolist(),
+            all_rewards=rewards,
             info=info,
         )
 
