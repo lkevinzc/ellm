@@ -106,29 +106,18 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare datasets
-        prompts_dataset, eval_prompts_dataset = get_datasets(tokenizer, strategy)
-        self.prompts_dataloader = strategy.setup_dataloader(
-            prompts_dataset,
-            args.micro_rollout_batch_size,
-            pin_memory=True,
-            shuffle=True,
-        )
-        self.eval_prompts_dataloader = DataLoader(
-            eval_prompts_dataset,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            drop_last=False,
-            pin_memory=True,
-        )
-
+        self.prepare_data(strategy, tokenizer)
         strategy.print("Prompt dataset example:")
-        strategy.print("Processed:", prompts_dataset[0][0])
-        strategy.print("Raw:", prompts_dataset[0][1])
-        strategy.print("Prompt dataloader len:", len(self.prompts_dataloader))
+        strategy.print("Processed:", self.prompts_dataset[0][0])
+        strategy.print("Raw:", self.prompts_dataset[0][1])
+        strategy.print("Prompt dataset len:", len(self.prompts_dataset))
+
+        self.eval_input_key = args.eval_input_key or args.input_key
+        self.eval_output_key = args.eval_output_key or args.output_key
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
-            len(prompts_dataset) * args.max_epochs // args.train_batch_size
+            len(self.prompts_dataset) * args.max_epochs // args.train_batch_size
         )
         max_steps = math.ceil(
             args.num_prompt_epoch
@@ -257,6 +246,24 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             _ = [fut.result() for fut in futs]
 
         dist.barrier()
+
+    def prepare_data(self, strategy, tokenizer):
+        self.prompts_dataset, self.eval_prompts_dataset = get_datasets(
+            tokenizer, strategy
+        )
+        self.prompts_dataloader = strategy.setup_dataloader(
+            self.prompts_dataset,
+            strategy.args.micro_rollout_batch_size,
+            pin_memory=True,
+            shuffle=True,
+        )
+        self.eval_prompts_dataloader = DataLoader(
+            self.eval_prompts_dataset,
+            batch_size=strategy.args.eval_batch_size,
+            shuffle=False,
+            drop_last=False,
+            pin_memory=True,
+        )
 
     def run(self):
         self._init(self.args, self.actors)
@@ -516,18 +523,24 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         win_rate = 0
         win_rate_prob = 0
         if self.strategy.is_rank_0():
+            processed_prompts = []
             prompts = []
             responses = []
             references = []
             futs = []
             win_probs = []
             wins = []
-            for i, (processed_prompts, _, refs) in enumerate(dataloader):
-                prompts.extend(processed_prompts)
+            for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
+                dataloader
+            ):
+                processed_prompts.extend(batch_processed_prompts)
+                prompts.extend(batch_prompts)
                 references.extend(refs)
 
                 actor = self.actors[i % len(self.actors)]
-                fut = actor.futures.generate_and_maybe_eval(processed_prompts, refs)
+                fut = actor.futures.generate_and_maybe_eval(
+                    batch_prompts, batch_processed_prompts, refs
+                )
                 futs.append(fut)
                 if len(futs) == len(self.actors) or i == len(dataloader) - 1:
                     for fut in futs:
@@ -540,11 +553,16 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)
             pd.DataFrame(
-                {"prompt": prompts, "reference": references, "response": responses}
+                {
+                    self.eval_input_key: prompts,
+                    self.eval_output_key: responses,
+                    f"format_{self.eval_input_key}": processed_prompts,
+                    "reference": references,
+                    "generator": self.args.wandb_run_name,
+                }
             ).to_json(
                 os.path.join(eval_res_path, f"{steps}.json"),
                 orient="records",
-                lines=True,
             )
             win_rate = np.mean(wins).item()
             win_rate_prob = np.mean(win_probs).item()

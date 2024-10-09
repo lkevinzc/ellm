@@ -33,14 +33,20 @@ def get_tokenizer(pretrain, model, padding_side="left", use_fast=True):
     return tokenizer
 
 
-def get_datasets(tokenizer, strategy):
+def get_datasets(tokenizer, strategy, eval_only=False):
     args = strategy.args
-    prompt_dataset = load_dataset(args.prompt_data)
-    prompts_data = prompt_dataset[args.train_split].select(
-        range(min(args.max_train, len(prompt_dataset[args.train_split])))
-    )
+    if not eval_only or args.eval_data == "":
+        prompt_dataset = load_dataset(args.prompt_data)
+        prompts_data = prompt_dataset[args.train_split].select(
+            range(min(args.max_train, len(prompt_dataset[args.train_split])))
+        )
     if args.eval_data:
-        eval_dataset = load_dataset(args.eval_data)
+        strategy.print(f"loading eval data {args.eval_data}")
+        if "@" in args.eval_data:
+            name, path = args.eval_data.splot("@")
+        else:
+            name, path = None, args.eval_data
+        eval_dataset = load_dataset(path, name, trust_remote_code=True)
     else:
         # Share the same dataset but use different split.
         eval_dataset = prompt_dataset
@@ -48,15 +54,18 @@ def get_datasets(tokenizer, strategy):
     eval_prompts_data = eval_dataset[args.eval_split].select(
         range(min(args.max_test, len(eval_dataset[args.eval_split])))
     )
-    prompts_dataset = PromptDataset(
-        prompts_data,
-        tokenizer,
-        strategy,
-        input_key=args.input_key,
-        output_key=args.output_key,
-        apply_chat_template=args.apply_chat_template,
-        get_reference=True,
-    )
+    if not eval_only:
+        prompts_dataset = PromptDataset(
+            prompts_data,
+            tokenizer,
+            strategy,
+            input_key=args.input_key,
+            output_key=args.output_key,
+            apply_chat_template=args.apply_chat_template,
+            get_reference=True,
+        )
+    else:
+        prompts_dataset = None
     eval_prompts_dataset = PromptDataset(
         eval_prompts_data,
         tokenizer,

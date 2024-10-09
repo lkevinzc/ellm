@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import time
@@ -5,17 +6,20 @@ from argparse import Namespace
 from typing import List
 
 import datasets
+import launchpad as lp
 import pandas as pd
 import torch
 import torch.distributed as dist
 import tree
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+from transformers import GenerationConfig
 
 from ellm import oracles
 from ellm.learners import DAPLearner
 from ellm.learners.dap import DAPLearner
 from ellm.types import PreferenceData
-from ellm.utils.data import shard_buffer
+from ellm.utils.data import get_datasets, shard_buffer
 
 
 class OfflineDAPLearner(DAPLearner):
@@ -26,18 +30,35 @@ class OfflineDAPLearner(DAPLearner):
         self.args = args
         self._init(args, actors=[])
 
+        self.eval_generate_args = GenerationConfig(
+            max_new_tokens=args.eval_generate_max_length,
+            temperature=args.eval_temperature,
+            top_p=args.eval_top_p,
+            do_sample=True,
+            use_cache=False,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+        )
+
+        # Oracle reward model for evaluation.
+        oracle_cls = oracles.get_cls(args.reward_oracle)
+        logging.info(f"Using reward oracle {args.reward_oracle} {oracle_cls}")
+        self.oracle = oracle_cls(
+            reward_model_path=args.reward_oracle,
+            tokenizer_path=args.pretrain,
+            remote_rm_url=args.remote_rm_url,  # Only for remote RM.
+        )
+
+    def prepare_data(self, strategy, tokenizer):
+        args = self.args
         if args.preference_data:
             if os.path.exists(args.preference_data):
                 data = datasets.load_from_disk(args.preference_data)
             else:
                 data = datasets.load_dataset(args.preference_data)
-            all_data = []
-            for item in tqdm(
-                data,
-                desc="loading preference data",
-                disable=not self.strategy.is_rank_0(),
-            ):
-                all_data.append(
+            all_shards = []
+            for item in tqdm(data, desc="loading preference data"):
+                all_shards.append(
                     PreferenceData(
                         prompt=item[args.prompt_key],
                         chosen_response=item[args.chosen_key],
@@ -52,7 +73,7 @@ class OfflineDAPLearner(DAPLearner):
                     )
                 )
             self.all_buffer: List[PreferenceData] = shard_buffer(
-                all_data,
+                all_shards,
                 dist.get_rank(),
                 dist.get_world_size(),
                 args.seed,
@@ -66,22 +87,19 @@ class OfflineDAPLearner(DAPLearner):
             self.all_buffer: List[PreferenceData] = list(
                 all_shards[torch.distributed.get_rank()]
             )
-        self.eval_generate_args = {
-            "do_sample": False,
-            "early_stopping": True,
-            "max_new_tokens": 200,
-            "top_p": 0.95,
-            "pad_token_id": self.tokenizer.pad_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
-        }
-
-        # Oracle reward model for evaluation.
-        oracle_cls = oracles.get_cls(args.reward_oracle)
-        print("Using reward oracle", args.reward_oracle, oracle_cls)
-        self.oracle = oracle_cls(
-            reward_model_path=args.reward_oracle,
-            tokenizer_path=args.pretrain,
-            max_workers=16,
+        self.prompts_dataset = tree.flatten(
+            all_shards
+        )  # needed to calculate lr scheduler
+        self.prompts_dataloader = None
+        _, self.eval_prompts_dataset = get_datasets(
+            tokenizer, self.strategy, eval_only=True
+        )
+        self.eval_prompts_dataloader = DataLoader(
+            self.eval_prompts_dataset,
+            batch_size=strategy.args.eval_batch_size,
+            shuffle=False,
+            drop_last=False,
+            pin_memory=True,
         )
 
     def run(self):
@@ -128,7 +146,8 @@ class OfflineDAPLearner(DAPLearner):
         self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
 
         if self.strategy.is_rank_0():
-            self._wandb.finish()
+            self._wandb.finish() if self._wandb else None
+            lp.stop()
 
     def evaluate(self, dataloader, steps):
         self.strategy.print(f"Start generating evaluation responses at step {steps}")
@@ -139,11 +158,15 @@ class OfflineDAPLearner(DAPLearner):
         win_rate = 0
         win_rate_prob = 0
         if self.strategy.is_rank_0():
+            processed_prompts = []
             prompts = []
             responses = []
             references = []
-            for processed_prompts, _, refs in tqdm(dataloader, desc="generating"):
-                prompts.extend(processed_prompts)
+            for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
+                dataloader
+            ):
+                processed_prompts.extend(batch_processed_prompts)
+                prompts.extend(batch_prompts)
                 references.extend(refs)
                 batch = self.tokenizer(
                     processed_prompts,
@@ -163,6 +186,21 @@ class OfflineDAPLearner(DAPLearner):
                 completions = [c.strip() for c in completions]
                 print(processed_prompts[0], completions[0])
                 responses.extend(completions)
+
+            eval_res_path = os.path.join(self.save_path, "eval_results")
+            os.makedirs(eval_res_path, exist_ok=True)
+            pd.DataFrame(
+                {
+                    self.eval_input_key: prompts,
+                    self.eval_output_key: responses,
+                    f"format_{self.eval_input_key}": processed_prompts,
+                    "reference": references,
+                    "generator": self.args.wandb_run_name,
+                }
+            ).to_json(
+                os.path.join(eval_res_path, f"{steps}.json"),
+                orient="records",
+            )
 
             win_probs = self.oracle.compare(
                 prompts, responses, references, return_probs=True, disable_tqdm=True

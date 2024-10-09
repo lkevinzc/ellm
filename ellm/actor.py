@@ -116,6 +116,7 @@ class Actor:
     def generate_and_maybe_eval(
         self,
         prompts: List[str],
+        formatted_prompts: List[str],
         references: List[str] = None,
     ):
         """
@@ -123,7 +124,7 @@ class Actor:
         2) Optionally evaluate the win rate over references based on the oracle reward model.
         """
         assert self.eval_mode
-        candidates = self.generate(prompts, self.eval_sampling_params)
+        candidates = self.generate(formatted_prompts, self.eval_sampling_params)
 
         if self.num_eval_gen > 1:
             # best of n sampling
