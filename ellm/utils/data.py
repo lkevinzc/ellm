@@ -1,10 +1,10 @@
-import os
-from pathlib import Path
+import math
+import random
 from typing import Callable, List, Tuple
 
 import torch
 import torch.nn.functional as F
-from datasets import interleave_datasets, load_dataset
+from datasets import load_dataset
 from torch.utils.data import Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -33,118 +33,72 @@ def get_tokenizer(pretrain, model, padding_side="left", use_fast=True):
     return tokenizer
 
 
-def blending_datasets(
-    datasets,
-    probabilities,
-    strategy=None,
-    seed=42,
-    max_count=5000000,
-    return_eval=True,
-    eval_sample=0,
-    stopping_strategy="first_exhausted",
-):
-    datasets = datasets.split(",")
-    probabilities = list(map(float, probabilities.split(",")))
-    assert len(probabilities) == len(datasets)
-
-    train_data_list = []
-    eval_data_list = []
-    for i, dataset in enumerate(datasets):
-        dataset = dataset.strip()
-        dataset_version_list = dataset.split("@")
-        strategy.print(f"dataset: {dataset}")
-        # local dir with python script or common local file
-        if os.path.isdir(os.path.join(os.getcwd(), dataset)) or dataset.endswith(
-            (".json", ".jsonl", ".csv", ".parquet", ".txt")
-        ):
-            if dataset.endswith((".json", ".jsonl", ".csv", ".parquet", ".txt")):
-                files = dataset
-                data_type = os.path.splitext(files)[1][1:]
-            else:
-                path = Path(dataset)
-                script = [str(file.resolve()) for file in Path(path).rglob("*.py")]
-                extensions = ("*.json", "*.jsonl", "*.csv", "*.parquet", "*.txt")
-                files = [
-                    str(file) for ext in extensions for file in Path(path).rglob(ext)
-                ]
-                strategy.print(f"script: {script}")
-                strategy.print(f"files: {files}")
-                # For dir, follow python script or first file type
-                data_type = (
-                    script[0] if len(script) == 1 else os.path.splitext(files[0])[1][1:]
-                )
-            # reformat data type
-            if data_type in ["json", "jsonl"]:
-                data_type = "json"
-            elif data_type == "txt":
-                data_type = "text"
-            elif data_type.endswith(".py"):
-                # load local dir with python script
-                files = None
-            if data_type.endswith(".py"):
-                strategy.print(f"load {dataset} with script {data_type}")
-            else:
-                strategy.print(f"load {files} from {dataset}")
-            data = load_dataset(data_type, data_files=files)
-        elif len(dataset_version_list) == 2:
-            dataset = dataset_version_list[0]
-            version = dataset_version_list[1]
-            data = load_dataset(dataset, revision=version.strip())
-        elif len(dataset_version_list) == 1:
-            dataset = dataset_version_list[0]
-            data = load_dataset(dataset)
-        else:
-            raise Exception(f"Dataset Name {dataset}: Format error")
-
-        if "train" in data:
-            train_data_list.append(
-                data["train"].select(range(min(max_count, len(data["train"]))))
-            )
-        else:
-            train_data_list.append(
-                data.select(range(min(max_count, len(data))))
-            )  # train will contains eval? TODO
-
-        if return_eval:
-            max_count01 = min(int(max_count * 0.1), eval_sample)
-            if "test" in data:
-                eval_data = data["test"].select(
-                    range(min(max_count01, len(data["test"])))
-                )
-            elif "validation" in data:
-                eval_data = data["validation"].select(
-                    range(min(max_count01, len(data["validation"])))
-                )
-            elif "train" in data:
-                eval_data = data["train"].select(
-                    range(min(max_count01, int(len(data["train"]) * 0.01)))
-                )
-            else:
-                eval_data = data.select(
-                    range(min(int(max_count01), int(len(data) * 0.01)))
-                )
-            eval_data_list.append(eval_data)
-
-    # merge datasets
-    if strategy.is_rank_0():
-        print(train_data_list)
-
-    train_dataset = interleave_datasets(
-        train_data_list,
-        probabilities=probabilities,
-        seed=seed,
-        stopping_strategy=stopping_strategy,
+def get_datasets(tokenizer, strategy):
+    args = strategy.args
+    prompt_dataset = load_dataset(args.prompt_data)
+    prompts_data = prompt_dataset[args.train_split].select(
+        range(min(args.max_train, len(prompt_dataset[args.train_split])))
     )
-    if return_eval:
-        eval_dataset = interleave_datasets(
-            eval_data_list,
-            probabilities=probabilities,
-            seed=seed,
-            stopping_strategy=stopping_strategy,
-        )
-        return train_dataset, eval_dataset
+    if args.eval_data:
+        eval_dataset = load_dataset(args.eval_data)
     else:
-        return train_dataset
+        # Share the same dataset but use different split.
+        eval_dataset = prompt_dataset
+
+    eval_prompts_data = eval_dataset[args.eval_split].select(
+        range(min(args.max_test, len(eval_dataset[args.eval_split])))
+    )
+    prompts_dataset = PromptDataset(
+        prompts_data,
+        tokenizer,
+        strategy,
+        input_key=args.input_key,
+        output_key=args.output_key,
+        apply_chat_template=args.apply_chat_template,
+        get_reference=True,
+    )
+    eval_prompts_dataset = PromptDataset(
+        eval_prompts_data,
+        tokenizer,
+        strategy,
+        input_key=args.eval_input_key or args.input_key,
+        output_key=args.eval_output_key or args.output_key,
+        apply_chat_template=args.apply_chat_template,
+        get_reference=True,
+    )
+    return prompts_dataset, eval_prompts_dataset
+
+
+def shard_buffer(
+    dataset,
+    rank: int,
+    num_replicas: int,
+    seed: int,
+    shuffle=True,
+    drop_last=True,
+):
+    if drop_last and len(dataset) % num_replicas != 0:
+        # Ensure each rank receives the same amount of data.
+        num_samples = math.ceil((len(dataset) - num_replicas) / num_replicas)
+    else:
+        num_samples = math.ceil(len(dataset) / num_replicas)
+    total_size = num_samples * num_replicas
+    indices = list(range(len(dataset)))
+    if shuffle:
+        # deterministically shuffle based on seed
+        random.Random(seed).shuffle(indices)
+    if not drop_last:
+        padding_size = total_size - len(indices)
+        if padding_size <= len(indices):
+            indices += indices[:padding_size]
+        else:
+            dataset += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+    else:
+        indices = indices[:total_size]
+    assert len(indices) == total_size
+    indices = indices[rank:total_size:num_replicas]
+    assert len(indices) == num_samples
+    return [dataset[i] for i in indices]
 
 
 def pad_to_length(tensor, length, pad_value, dim=-1):
@@ -208,24 +162,19 @@ class PromptDataset(Dataset):
         dataset,
         tokenizer,
         strategy,
-        input_template=None,
+        input_key,
+        output_key=None,
+        apply_chat_template=False,
         get_reference=False,
     ) -> None:
         super().__init__()
         self.strategy = strategy
         self.tokenizer = tokenizer
-        self.input_template = input_template
         self.get_reference = get_reference
-        self.n_samples_per_prompt = getattr(
-            self.strategy.args, "n_samples_per_prompt", 1
-        )
 
-        input_key = getattr(self.strategy.args, "input_key", None)
-        apply_chat_template = getattr(self.strategy.args, "apply_chat_template", False)
         if apply_chat_template:
             apply_chat_template = self.tokenizer.apply_chat_template
         if get_reference:
-            output_key = getattr(self.strategy.args, "output_key", None)
             assert output_key is not None
 
         self.raw_prompts = []
@@ -241,8 +190,6 @@ class PromptDataset(Dataset):
                 )
             else:
                 prompt = data[input_key]
-                # if input_template:
-                #     prompt = input_template.format(prompt)
             if get_reference:
                 return data[input_key], prompt, data[output_key]
             return data[input_key], prompt

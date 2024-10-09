@@ -19,16 +19,16 @@ flags.DEFINE_bool("apply_chat_template", True, "apply chat template")
 
 
 def main(_):
-    max_samples = 10000
+    max_train = 10000
     strategy = DummyStrategy(args=FLAGS)
     prompts_data = blending_datasets(
         FLAGS.prompt_data,
         "1",
         strategy,
-        max_count=max_samples,
+        max_count=max_train,
         return_eval=False,
     )
-    prompts_data = prompts_data.select(range(min(max_samples, len(prompts_data))))
+    prompts_data = prompts_data.select(range(min(max_train, len(prompts_data))))
     tokenizer = AutoTokenizer.from_pretrained(
         FLAGS.pretrain, trust_remote_code=True, use_fast=True
     )

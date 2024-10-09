@@ -4,8 +4,10 @@ import time
 from argparse import Namespace
 from typing import List
 
+import datasets
 import pandas as pd
 import torch
+import torch.distributed as dist
 import tree
 from tqdm import tqdm
 
@@ -13,6 +15,7 @@ from ellm import oracles
 from ellm.learners import DAPLearner
 from ellm.learners.dap import DAPLearner
 from ellm.types import PreferenceData
+from ellm.utils.data import shard_buffer
 
 
 class OfflineDAPLearner(DAPLearner):
@@ -21,13 +24,48 @@ class OfflineDAPLearner(DAPLearner):
         args: Namespace,
     ) -> None:
         self.args = args
-        assert os.path.exists(args.offline_buffer_path)
         self._init(args, actors=[])
-        # TODO: 4 shards by default; remove this hard-coded parameter later.
-        all_shards = pd.read_pickle(args.offline_buffer_path)
-        self.all_buffer: List[PreferenceData] = list(
-            all_shards[torch.distributed.get_rank()]
-        )
+
+        if args.preference_data:
+            if os.path.exists(args.preference_data):
+                data = datasets.load_from_disk(args.preference_data)
+            else:
+                data = datasets.load_dataset(args.preference_data)
+            all_data = []
+            for item in tqdm(
+                data,
+                desc="loading preference data",
+                disable=not self.strategy.is_rank_0(),
+            ):
+                all_data.append(
+                    PreferenceData(
+                        prompt=item[args.prompt_key],
+                        chosen_response=item[args.chosen_key],
+                        rejected_response=item[args.rejected_key],
+                        chosen_id=0,
+                        chosen_feature=None,
+                        rejected_feature=None,
+                        init_clash=False,
+                        same=item[args.chosen_key] == item[args.rejected_key],
+                        is_model_data=False,
+                        info={},
+                    )
+                )
+            self.all_buffer: List[PreferenceData] = shard_buffer(
+                all_data,
+                dist.get_rank(),
+                dist.get_world_size(),
+                args.seed,
+                shuffle=True,
+                drop_last=True,
+            )
+        else:
+            # Load pre-dumped data.
+            assert os.path.exists(args.offline_buffer_path)
+            all_shards = pd.read_pickle(args.offline_buffer_path)
+            self.all_buffer: List[PreferenceData] = list(
+                all_shards[torch.distributed.get_rank()]
+            )
         self.eval_generate_args = {
             "do_sample": False,
             "early_stopping": True,
@@ -51,7 +89,6 @@ class OfflineDAPLearner(DAPLearner):
         self.start_time = time.time()
         self.actor_info = {}
         bs = self.args.micro_rollout_batch_size
-        random.shuffle(self.all_buffer)
 
         if not self.strategy.args.debug:
             self.save_logs_and_checkpoints(
@@ -85,6 +122,8 @@ class OfflineDAPLearner(DAPLearner):
                 progress_bar.update()
                 steps += 1
             self.prompt_epoch = p_ep + 1
+            # Reorder data for another epoch.
+            random.Random(self.args.seed + p_ep).shuffle(self.all_buffer)
 
         self.save_logs_and_checkpoints(self.args, steps, train_info, final=True)
 

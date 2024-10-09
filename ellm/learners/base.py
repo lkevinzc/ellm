@@ -26,8 +26,7 @@ from ellm.actor import Actor
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
 from ellm.types import DAPAlgo, PreferenceData
-from ellm.utils.data import (PreferenceDataset, PromptDataset,
-                             blending_datasets, get_tokenizer)
+from ellm.utils.data import PreferenceDataset, get_datasets, get_tokenizer
 from ellm.utils.deepspeed import get_strategy
 from ellm.utils.distributed import (init_process_group,
                                     node_ip_address_from_perspective,
@@ -107,42 +106,12 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare datasets
-        prompts_data, eval_prompts_data = blending_datasets(
-            args.prompt_data,
-            args.prompt_data_probs,
-            strategy,
-            args.seed,
-            max_count=args.max_samples,
-            return_eval=True,
-            eval_sample=args.max_eval,
-        )
-        prompts_data = prompts_data.select(
-            range(min(args.max_samples, len(prompts_data)))
-        )
-        prompts_dataset = PromptDataset(
-            prompts_data,
-            tokenizer,
-            strategy,
-            input_template=args.input_template,
-            get_reference=True,
-        )
-        prompts_dataloader = strategy.setup_dataloader(
+        prompts_dataset, eval_prompts_dataset = get_datasets(tokenizer, strategy)
+        self.prompts_dataloader = strategy.setup_dataloader(
             prompts_dataset,
             args.micro_rollout_batch_size,
             pin_memory=True,
             shuffle=True,
-        )
-        strategy.print("Prompt dataset example:")
-        strategy.print("Processed:", prompts_dataset[0][0])
-        strategy.print("Raw:", prompts_dataset[0][1])
-        strategy.print("Prompt dataloader len:", len(prompts_dataloader))
-
-        eval_prompts_dataset = PromptDataset(
-            eval_prompts_data,
-            tokenizer,
-            strategy,
-            input_template=args.input_template,
-            get_reference=True,
         )
         self.eval_prompts_dataloader = DataLoader(
             eval_prompts_dataset,
@@ -151,6 +120,11 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             drop_last=False,
             pin_memory=True,
         )
+
+        strategy.print("Prompt dataset example:")
+        strategy.print("Processed:", prompts_dataset[0][0])
+        strategy.print("Raw:", prompts_dataset[0][1])
+        strategy.print("Prompt dataloader len:", len(self.prompts_dataloader))
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
@@ -227,7 +201,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         self.strategy = strategy
         self.tokenizer = tokenizer
-        self.prompts_dataloader = prompts_dataloader
         self.update_interval = args.rollout_batch_size // (
             strategy.world_size * args.micro_rollout_batch_size
         )

@@ -44,15 +44,20 @@ def get_default_parser():
     parser.add_argument(
         "--prompt_data", type=str, default="lkevinzc/tldr-with-sft-reference"
     )
+    parser.add_argument("--input_key", type=str, default="prompt")
+    parser.add_argument("--output_key", type=str, default="output")
+
     parser.add_argument(
-        "--prompt_data_probs",
-        type=str,
-        default="1.0",
-        help="sampling probs for datasets",
+        "--eval_data", type=str, default="", help="Defaults to prompt_data if empty"
     )
-    parser.add_argument("--max_samples", type=int, default=50000)
+    parser.add_argument("--eval_input_key", type=str, default="")
+    parser.add_argument("--eval_output_key", type=str, default="")
+
+    parser.add_argument("--train_split", type=str, default="train")
+    parser.add_argument("--eval_split", type=str, default="test")
+    parser.add_argument("--max_train", type=int, default=50000)
     parser.add_argument("--max_queries", type=int, default=50000)
-    parser.add_argument("--max_eval", type=int, default=1000)
+    parser.add_argument("--max_test", type=int, default=1000)
 
     # Offline preference dataset
     parser.add_argument(
@@ -200,11 +205,6 @@ def get_default_parser():
     parser.add_argument("--gradient_checkpointing_use_reentrant", action="store_true")
 
     # custom dataset key name
-    parser.add_argument("--prompt_key", type=str, default="prompt")
-    parser.add_argument("--chosen_key", type=str, default="chosen")
-    parser.add_argument("--rejected_key", type=str, default="rejected")
-    parser.add_argument("--input_key", type=str, default="prompt")
-    parser.add_argument("--output_key", type=str, default="output")
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)
 
