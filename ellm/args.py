@@ -175,7 +175,6 @@ def get_default_parser():
 
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
     parser.add_argument("--max_norm", type=float, default=1.0)
-    parser.add_argument("--max_len", type=int, default=512)
     parser.add_argument("--l2", type=float, default=0.0)
     parser.add_argument("--beta", type=float, default=2.0)
     parser.add_argument(

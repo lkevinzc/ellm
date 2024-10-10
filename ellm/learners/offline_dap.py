@@ -34,7 +34,7 @@ class OfflineDAPLearner(DAPLearner):
             max_new_tokens=args.eval_generate_max_length,
             temperature=args.eval_temperature,
             top_p=args.eval_top_p,
-            do_sample=True,
+            do_sample=args.eval_temperature > 0,
             use_cache=False,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
@@ -72,6 +72,7 @@ class OfflineDAPLearner(DAPLearner):
                         info={},
                     )
                 )
+            all_shards = all_shards[: args.max_train]
             self.all_buffer: List[PreferenceData] = shard_buffer(
                 all_shards,
                 dist.get_rank(),
@@ -102,7 +103,6 @@ class OfflineDAPLearner(DAPLearner):
 
     def run(self):
         self.steps = 0
-        early_stop = False
         self.start_time = time.time()
 
         self.actor_info = {}
@@ -112,6 +112,8 @@ class OfflineDAPLearner(DAPLearner):
             self.save_logs_and_checkpoints({}, eval=True)
 
         self.steps = 1
+        print("sleeping")
+        time.sleep(10)
         for p_ep in range(self.args.num_prompt_epoch):
             progress_bar = tqdm(
                 range(len(self.all_buffer) // bs),

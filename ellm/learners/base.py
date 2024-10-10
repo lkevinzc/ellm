@@ -106,6 +106,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare datasets
+        self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
+        self.all_buffer = deque(maxlen=int(1e9))
+
         self.prepare_data(strategy, tokenizer)
         strategy.print("Prompt dataset example:")
         strategy.print(self.prompts_dataset[0])
@@ -184,8 +187,6 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 strategy,
                 self._wandb,
             )
-        self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
-        self.all_buffer = deque(maxlen=int(1e9))
 
         self.strategy = strategy
         self.tokenizer = tokenizer
@@ -346,7 +347,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
             if self.args.dump_all_buffer:
-                self.all_buffer.append(new_pref)
+                self.all_buffer.append(
+                    PreferenceData(
+                        prompt=new_pref.prompt,
+                        chosen_response=new_pref.chosen_response,
+                        rejected_response=new_pref.rejected_response,
+                        same=new_pref.chosen_response == new_pref.rejected_response,
+                    )
+                )
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()

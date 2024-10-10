@@ -1,3 +1,4 @@
+import logging
 import math
 import random
 from typing import Callable, List, Tuple
@@ -280,6 +281,9 @@ class PreferenceDataset(Dataset):
             prompt_ids_len = prompt_token["attention_mask"].int().sum().item()
             # filter the sample whose length is greater than max_length (2 for answer length)
             if prompt_ids_len >= self.prompt_max_length - 2:
+                logging.warn(
+                    "Dropping samples due to length limit; this may cause the training hang because of synchronization"
+                )
                 continue
             else:
                 self.prompt_ids_lens.append(prompt_ids_len)
