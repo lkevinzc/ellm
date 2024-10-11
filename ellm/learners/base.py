@@ -541,6 +541,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             futs = []
             win_probs = []
             wins = []
+            progress_bar = tqdm(range(dataloader.__len__()))
             for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
                 dataloader
             ):
@@ -560,6 +561,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         wins.extend(win_prob > 0.5)
                         win_probs.extend(win_prob)
                     futs.clear()
+                progress_bar.update()
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)

@@ -1,12 +1,20 @@
-"""Offline alignment."""
+"""Offline alignment with online vLLM evaluation."""
+
+import launchpad as lp
 
 from ellm.args import default_args_validation, get_default_parser
+from ellm.interface import get_program
 from ellm.learners import OfflineDAPLearner
 
 
 def main(args):
-    learner = OfflineDAPLearner(args)
-    learner.run()
+    program, local_resources = get_program(args, OfflineDAPLearner)
+    lp.launch(
+        program,
+        launch_type="local_mp",
+        local_resources=local_resources,
+        terminal="current_terminal",
+    )
 
 
 if __name__ == "__main__":

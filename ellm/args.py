@@ -220,7 +220,7 @@ def get_default_parser():
     parser.add_argument(
         "--wandb_run_name",
         type=str,
-        default="online_SimPO",
+        default="debug",
     )
     return parser
 

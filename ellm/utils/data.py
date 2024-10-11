@@ -1,11 +1,12 @@
 import logging
 import math
+import os
 import random
 from typing import Callable, List, Tuple
 
+import datasets
 import torch
 import torch.nn.functional as F
-from datasets import load_dataset
 from torch.utils.data import Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
@@ -34,10 +35,16 @@ def get_tokenizer(pretrain, model, padding_side="left", use_fast=True):
     return tokenizer
 
 
+def load_data_from_disk_or_hf(data_name):
+    if os.path.exists(data_name):
+        return datasets.load_from_disk(data_name)
+    return datasets.load_dataset(data_name)
+
+
 def get_datasets(tokenizer, strategy, eval_only=False):
     args = strategy.args
     if not eval_only or args.eval_data == "":
-        prompt_dataset = load_dataset(args.prompt_data)
+        prompt_dataset = load_data_from_disk_or_hf(args.prompt_data)
         prompts_data = prompt_dataset[args.train_split].select(
             range(min(args.max_train, len(prompt_dataset[args.train_split])))
         )
@@ -47,7 +54,7 @@ def get_datasets(tokenizer, strategy, eval_only=False):
             name, path = args.eval_data.split("@")
         else:
             name, path = None, args.eval_data
-        eval_dataset = load_dataset(path, name, trust_remote_code=True)
+        eval_dataset = datasets.load_dataset(path, name, trust_remote_code=True)
     else:
         # Share the same dataset but use different split.
         eval_dataset = prompt_dataset
@@ -181,6 +188,7 @@ class PromptDataset(Dataset):
         self.strategy = strategy
         self.tokenizer = tokenizer
         self.get_reference = get_reference
+        self.prompt_max_length = strategy.args.prompt_max_length
 
         if apply_chat_template:
             apply_chat_template = self.tokenizer.apply_chat_template
@@ -214,8 +222,9 @@ class PromptDataset(Dataset):
                 prompt, processed_prompt = preprocess_data(
                     data, input_key, apply_chat_template
                 )
-            self.processed_prompts.append(processed_prompt)
-            self.raw_prompts.append(prompt)
+            if len(tokenizer(processed_prompt)["input_ids"]) <= self.prompt_max_length:
+                self.processed_prompts.append(processed_prompt)
+                self.raw_prompts.append(prompt)
 
     def __len__(self):
         return len(self.raw_prompts)

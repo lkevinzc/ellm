@@ -19,7 +19,7 @@ from ellm.utils.ipc import PlasmaShmClient
 class Actor:
     """Actor handles the interaction between the LLM policy and the environment."""
 
-    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
+    def __init__(self, ipc_server, vllm_args, args) -> None:
         self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
@@ -31,15 +31,24 @@ class Actor:
         # ###################################
         # ####      vLLM Generation      ####
         # ###################################
+        self.sampling_params = vllm.SamplingParams(
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            max_tokens=args.generate_max_length,
+            n=args.num_samples,
+        )
+
         self.__vllm_version__ = vllm.__version__
 
         assert self.__vllm_version__ >= "0.4.1", "Upgrade to vLLM >= 0.4.1"
-        assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
+        assert (
+            self.sampling_params.n >= 2
+        ), "need to sample at least 2 responses per prompt"
 
         vllm.worker.worker.Worker = WorkerWrap
         vllm_args.update({"seed": time.time_ns() % 2**32})
         self.llm = vllm.LLM(**vllm_args)
-        self.sampling_params: vllm.SamplingParams = sampling_params
         self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
 
         # ###################################
@@ -58,12 +67,12 @@ class Actor:
         # ###################################
         self.learning_rm = False
         if args.exp_method == "no":
-            if sampling_params.n == 2:
+            if self.sampling_params.n == 2:
                 warn(
-                    f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+                    f"trying to sample {self.sampling_params.n} responses but no selection mechanism is provided"
                 )
         else:
-            assert sampling_params.n > 2
+            assert self.sampling_params.n > 2
             # We assume reward model-based explorer.
             rm_backbone_cls = backbone.get_cls(args.rm_backbone)
             logging.info(f"Using RM backbone {args.rm_backbone} {rm_backbone_cls}")
@@ -96,9 +105,14 @@ class Actor:
             self.num_eval_gen = 1
         self.eval_sampling_params = vllm.SamplingParams(
             n=self.num_eval_gen,
-            temperature=0.0 if self.num_eval_gen == 1 else args.bon_temperature,
-            top_p=0.95,
-            max_tokens=200,
+            temperature=(
+                args.eval_temperature
+                if self.num_eval_gen == 1
+                else args.bon_temperature
+            ),
+            top_p=args.eval_top_p,
+            top_k=args.eval_top_k,
+            max_tokens=args.eval_generate_max_length,
         )  # TODO hard-code first for tl;dr
 
     def generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
@@ -135,9 +149,11 @@ class Actor:
 
         if references:
             logging.info(f"Evaluating using oracle {self.oracle}")
+            st = time.time()
             win_probs = self.oracle.compare(
                 prompts, responses, references, return_probs=True, disable_tqdm=True
             )
+            logging.info(f"Time elapse {time.time() - st}")
             return responses, win_probs
         return responses, None
 
@@ -195,6 +211,7 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
+        st = time.time()
         bt_probs = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
@@ -203,6 +220,7 @@ class Actor:
             disable_tqdm=True,
         )
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
+        info["actor/oracle_time"] = time.time() - st
 
         if self.args.bt_sample:
             binary_feedback = torch.bernoulli(torch.from_numpy(bt_probs)).bool().numpy()

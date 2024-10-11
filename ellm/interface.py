@@ -2,7 +2,6 @@ from argparse import Namespace
 from typing import Type
 
 import launchpad as lp
-import vllm
 from launchpad.nodes.python import local_multi_processing
 
 from ellm.actor import Actor
@@ -53,13 +52,6 @@ def get_program(
         "gpu_memory_utilization": args.vllm_gpu_ratio,
         "dtype": "bfloat16",
     }
-    sampling_params = vllm.SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.generate_max_length,
-        n=args.num_samples,
-    )
 
     actors = []
     local_resources = {}
@@ -67,7 +59,7 @@ def get_program(
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(actor_cls, ipc_server, vllm_args, sampling_params, args),
+                lp.CourierNode(actor_cls, ipc_server, vllm_args, args),
                 label=label,
             )
         )
