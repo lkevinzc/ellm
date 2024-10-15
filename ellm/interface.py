@@ -51,6 +51,7 @@ def get_program(
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": args.vllm_gpu_ratio,
         "dtype": "bfloat16",
+        "enable_prefix_caching": False,
     }
 
     actors = []
