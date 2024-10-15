@@ -11,8 +11,8 @@ from ellm.types import DAPAlgo
 class XPOActor(actor.Actor):
     """Sample one response from llm and another from ref_llm."""
 
-    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
-        super().__init__(ipc_server, vllm_args, sampling_params, args)
+    def __init__(self, ipc_server, vllm_args, args) -> None:
+        super().__init__(ipc_server, vllm_args, args)
         self.sampling_params.n = 1  # one for each llm
         self.offload_ref_model = args.xpo_offload_actor_ref
 

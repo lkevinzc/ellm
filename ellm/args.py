@@ -33,6 +33,7 @@ def get_default_parser():
         choices=[2, 3, 4, 5, 8],
         default=5,
     )
+    parser.add_argument("--collocate", action="store_true")
     parser.add_argument(
         "--shm_size_mb",
         type=int,
@@ -43,15 +44,20 @@ def get_default_parser():
     parser.add_argument(
         "--prompt_data", type=str, default="lkevinzc/tldr-with-sft-reference"
     )
+    parser.add_argument("--input_key", type=str, default="prompt")
+    parser.add_argument("--output_key", type=str, default="output")
+
     parser.add_argument(
-        "--prompt_data_probs",
-        type=str,
-        default="1.0",
-        help="sampling probs for datasets",
+        "--eval_data", type=str, default="", help="Defaults to prompt_data if empty"
     )
-    parser.add_argument("--max_samples", type=int, default=50000)
+    parser.add_argument("--eval_input_key", type=str, default="")
+    parser.add_argument("--eval_output_key", type=str, default="")
+
+    parser.add_argument("--train_split", type=str, default="train")
+    parser.add_argument("--eval_split", type=str, default="test")
+    parser.add_argument("--max_train", type=int, default=50000)
     parser.add_argument("--max_queries", type=int, default=50000)
-    parser.add_argument("--max_eval", type=int, default=1000)
+    parser.add_argument("--max_test", type=int, default=1000)
 
     # Offline preference dataset
     parser.add_argument(
@@ -77,6 +83,7 @@ def get_default_parser():
     parser.add_argument("--learn_rm_only", action="store_true")
 
     # Model-based
+    parser.add_argument("--policy_for_exploration", action="store_true")
     parser.add_argument("--model_rollout", action="store_true")
     parser.add_argument("--max_model_data_ratio", type=float, default=0.2)
     parser.add_argument(
@@ -140,6 +147,10 @@ def get_default_parser():
     parser.add_argument("--top_p", type=float, default=1.0)
     parser.add_argument("--top_k", type=float, default=-1)
     parser.add_argument("--num_samples", type=int, default=2)
+    parser.add_argument("--eval_generate_max_length", type=int, default=200)
+    parser.add_argument("--eval_temperature", type=float, default=0.0)
+    parser.add_argument("--eval_top_p", type=float, default=0.95)
+    parser.add_argument("--eval_top_k", type=float, default=-1)
 
     parser.add_argument("--save_path", type=str, default="./output")
     parser.add_argument("--save_steps", type=int, default=-1)
@@ -164,7 +175,6 @@ def get_default_parser():
 
     parser.add_argument("--load_checkpoint", action="store_true", default=False)
     parser.add_argument("--max_norm", type=float, default=1.0)
-    parser.add_argument("--max_len", type=int, default=512)
     parser.add_argument("--l2", type=float, default=0.0)
     parser.add_argument("--beta", type=float, default=2.0)
     parser.add_argument(
@@ -199,11 +209,6 @@ def get_default_parser():
     parser.add_argument("--gradient_checkpointing_use_reentrant", action="store_true")
 
     # custom dataset key name
-    parser.add_argument("--prompt_key", type=str, default="prompt")
-    parser.add_argument("--chosen_key", type=str, default="chosen")
-    parser.add_argument("--rejected_key", type=str, default="rejected")
-    parser.add_argument("--input_key", type=str, default="prompt")
-    parser.add_argument("--output_key", type=str, default="output")
     parser.add_argument("--input_template", type=str, default="")
     parser.add_argument("--apply_chat_template", action="store_true", default=False)
 
@@ -215,7 +220,7 @@ def get_default_parser():
     parser.add_argument(
         "--wandb_run_name",
         type=str,
-        default="online_SimPO",
+        default="debug",
     )
     return parser
 

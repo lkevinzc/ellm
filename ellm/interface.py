@@ -2,7 +2,6 @@ from argparse import Namespace
 from typing import Type
 
 import launchpad as lp
-import vllm
 from launchpad.nodes.python import local_multi_processing
 
 from ellm.actor import Actor
@@ -27,12 +26,18 @@ def get_program(
     elif args.total_gpus == 4:
         actor_gpus = [0, 1]
         learner_gpus = [2, 3]
+        if args.collocate:
+            actor_gpus = [0, 1, 2]
+            learner_gpus = [3, 2, 1]
     elif args.total_gpus == 5:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 3, 2, 1]
     elif args.total_gpus == 8:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 5, 6, 7]
+        if args.collocate:
+            actor_gpus = [0, 1, 2, 3, 4, 5, 6]
+            learner_gpus = [7, 6, 5, 4, 3, 2, 1]
 
     # IPC.
     ipc_server = program.add_node(
@@ -46,14 +51,8 @@ def get_program(
         "tensor_parallel_size": 1,
         "gpu_memory_utilization": args.vllm_gpu_ratio,
         "dtype": "bfloat16",
+        "enable_prefix_caching": False,
     }
-    sampling_params = vllm.SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.generate_max_length,
-        n=args.num_samples,
-    )
 
     actors = []
     local_resources = {}
@@ -61,7 +60,7 @@ def get_program(
         label = f"actor_{i}"
         actors.append(
             program.add_node(
-                lp.CourierNode(actor_cls, ipc_server, vllm_args, sampling_params, args),
+                lp.CourierNode(actor_cls, ipc_server, vllm_args, args),
                 label=label,
             )
         )

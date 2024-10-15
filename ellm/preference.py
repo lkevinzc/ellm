@@ -40,7 +40,10 @@ class PreferenceCollector:
         return {k: v.to(device) for k, v in batch.items()}
 
     def __call__(
-        self, prompts: Union[str, List[str]], refs: Union[str, List[str]]
+        self,
+        prompts: Union[str, List[str]],
+        formatted_prompts: List[str],
+        refs: Union[str, List[str]],
     ) -> Tuple[List[PreferenceData], Metric]:
         # generate response & get feedback
         st_time = time.time()
@@ -48,9 +51,9 @@ class PreferenceCollector:
         actor = self.actors[rank % len(self.actors)]
 
         if self.strategy.args.online_evaluation:
-            handle = actor.step(prompts, refs)
+            handle = actor.step(prompts, formatted_prompts, refs)
         else:
-            handle = actor.step(prompts)
+            handle = actor.step(prompts, formatted_prompts)
 
         preference_data: List[PreferenceData] = self.ipc_client.deserialize_ipc(handle)
 

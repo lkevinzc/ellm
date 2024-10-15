@@ -1,10 +1,11 @@
 import logging
 import time
 from typing import List
-from warnings import warn
 
+import einops
 import numpy as np
 import torch
+import tree
 import vllm
 
 from ellm import oracles
@@ -14,11 +15,13 @@ from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
 from ellm.utils.ipc import PlasmaShmClient
 
+logging.getLogger("vllm").setLevel(logging.ERROR)
+
 
 class Actor:
     """Actor handles the interaction between the LLM policy and the environment."""
 
-    def __init__(self, ipc_server, vllm_args, sampling_params, args) -> None:
+    def __init__(self, ipc_server, vllm_args, args) -> None:
         self.args = args
         self.eval_mode = False
         self.pi_beta_weights = None
@@ -30,15 +33,24 @@ class Actor:
         # ###################################
         # ####      vLLM Generation      ####
         # ###################################
+        self.sampling_params = vllm.SamplingParams(
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            max_tokens=args.generate_max_length,
+            n=args.num_samples,
+        )
+
         self.__vllm_version__ = vllm.__version__
 
         assert self.__vllm_version__ >= "0.4.1", "Upgrade to vLLM >= 0.4.1"
-        assert sampling_params.n >= 2, "need to sample at least 2 responses per prompt"
+        assert (
+            self.sampling_params.n >= 2
+        ), "need to sample at least 2 responses per prompt"
 
         vllm.worker.worker.Worker = WorkerWrap
         vllm_args.update({"seed": time.time_ns() % 2**32})
         self.llm = vllm.LLM(**vllm_args)
-        self.sampling_params: vllm.SamplingParams = sampling_params
         self.model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
 
         # ###################################
@@ -57,12 +69,12 @@ class Actor:
         # ###################################
         self.learning_rm = False
         if args.exp_method == "no":
-            if sampling_params.n == 2:
-                warn(
-                    f"trying to sample {sampling_params.n} responses but no selection mechanism is provided"
+            if self.sampling_params.n == 2:
+                logging.warn(
+                    f"trying to sample {self.sampling_params.n} responses but no selection mechanism is provided"
                 )
         else:
-            assert sampling_params.n > 2
+            assert self.sampling_params.n > 2
             # We assume reward model-based explorer.
             rm_backbone_cls = backbone.get_cls(args.rm_backbone)
             logging.info(f"Using RM backbone {args.rm_backbone} {rm_backbone_cls}")
@@ -95,9 +107,14 @@ class Actor:
             self.num_eval_gen = 1
         self.eval_sampling_params = vllm.SamplingParams(
             n=self.num_eval_gen,
-            temperature=0.0 if self.num_eval_gen == 1 else args.bon_temperature,
-            top_p=0.95,
-            max_tokens=200,
+            temperature=(
+                args.eval_temperature
+                if self.num_eval_gen == 1
+                else args.bon_temperature
+            ),
+            top_p=args.eval_top_p,
+            top_k=args.eval_top_k,
+            max_tokens=args.eval_generate_max_length,
         )  # TODO hard-code first for tl;dr
 
     def generate(self, prompts: List[str], sampling_params: vllm.SamplingParams):
@@ -116,6 +133,7 @@ class Actor:
     def generate_and_maybe_eval(
         self,
         prompts: List[str],
+        formatted_prompts: List[str],
         references: List[str] = None,
     ):
         """
@@ -123,7 +141,7 @@ class Actor:
         2) Optionally evaluate the win rate over references based on the oracle reward model.
         """
         assert self.eval_mode
-        candidates = self.generate(prompts, self.eval_sampling_params)
+        candidates = self.generate(formatted_prompts, self.eval_sampling_params)
 
         if self.num_eval_gen > 1:
             # best of n sampling
@@ -133,9 +151,11 @@ class Actor:
 
         if references:
             logging.info(f"Evaluating using oracle {self.oracle}")
+            st = time.time()
             win_probs = self.oracle.compare(
                 prompts, responses, references, return_probs=True, disable_tqdm=True
             )
+            logging.info(f"Time elapse {time.time() - st}")
             return responses, win_probs
         return responses, None
 
@@ -157,7 +177,10 @@ class Actor:
         return (win_probs_1 + win_probs_2) / 2
 
     def step(
-        self, prompts: List[str], references: List[str] = None
+        self,
+        prompts: List[str],
+        formatted_prompts: List[str],
+        references: List[str] = None,
     ) -> List[PreferenceData]:
         """Step the actor.
 
@@ -173,7 +196,7 @@ class Actor:
         info = dict()
 
         # step 1. generate
-        candidates = self.generate(prompts, self.sampling_params)
+        all_candidates = self.generate(formatted_prompts, self.sampling_params)
 
         # step 2a. optional selection
         results = None
@@ -181,8 +204,10 @@ class Actor:
             # print("Selecting dueling responses from candidates...")
             # TODO: we need raw prompts here, but currently they are processed from learner side (issue #10).
             results: ExplorationResults
-            results = self.explorer.select(prompts, candidates)
+            results = self.explorer.select(prompts, all_candidates)
             candidates = results.dueling_candidates
+        else:
+            candidates = all_candidates
 
         # step 2b. optional online eval
         if self.enable_online_evaluation:
@@ -191,6 +216,7 @@ class Actor:
             info["eval/online_win_probs"] = win_probs.mean()
 
         # step 3. query for oracle preference
+        st = time.time()
         bt_probs = self.oracle.compare(
             prompts,
             [candidates[i][0] for i in range(len(prompts))],
@@ -199,6 +225,7 @@ class Actor:
             disable_tqdm=True,
         )
         info["actor/first_action_win_prob"] = bt_probs.mean().item()
+        info["actor/oracle_time"] = time.time() - st
 
         if self.args.bt_sample:
             binary_feedback = torch.bernoulli(torch.from_numpy(bt_probs)).bool().numpy()
@@ -241,12 +268,38 @@ class Actor:
         if results is not None:
             info.update(results.info)
 
+        chosen_responses = [candidates[i][chosen[i]] for i in range(len(prompts))]
+        rejected_responses = [candidates[i][rejected[i]] for i in range(len(prompts))]
+        if self.args.policy_for_exploration:
+            logging.info("Replacing data for policy training...")
+            chosen_responses = []
+            rejected_responses = []
+            # Recompute chosen & rejected only for policy learning
+            rewards = results.all_rewards
+            reward_margin = rewards - einops.rearrange(rewards, "e m n 1 -> e m 1 n")
+            E, M, _, _ = reward_margin.shape
+            random_belief_reward_margin = reward_margin[
+                torch.randint(E, (M,)), torch.arange(M)
+            ]  # M, N, N'
+            for i in range(M):
+                margin_i = random_belief_reward_margin[i]
+                margin_i_abs = torch.abs(margin_i)
+                tr_pairs = torch.where(margin_i_abs == margin_i_abs.max())
+                sel_idx = np.random.choice(len(tr_pairs[0]))  # break tie
+                candidate_1, candidate_2 = tr_pairs[0][sel_idx], tr_pairs[1][sel_idx]
+                if margin_i[candidate_1, candidate_2] > 0:
+                    rnd_chosen, rnd_rejected = candidate_1, candidate_2
+                else:
+                    rnd_chosen, rnd_rejected = candidate_2, candidate_1
+                chosen_responses.append(all_candidates[i][rnd_chosen])
+                rejected_responses.append(all_candidates[i][rnd_rejected])
+
         preference_data = [
             PreferenceData(
                 prompt=prompts[i],
                 chosen_id=chosen[i],
-                chosen_response=candidates[i][chosen[i]],
-                rejected_response=candidates[i][rejected[i]],
+                chosen_response=chosen_responses[i],
+                rejected_response=rejected_responses[i],
                 chosen_feature=(
                     candidate_features[i][chosen[i]] if self.learning_rm else None
                 ),
@@ -257,6 +310,14 @@ class Actor:
                 same=same_response[i],
                 is_model_data=results.is_model_data[i] if self.learning_rm else False,
                 info=info,
+                env_chosen_response=(
+                    candidates[i][chosen[i]] if self.args.policy_for_exploration else ""
+                ),
+                env_rejected_response=(
+                    candidates[i][rejected[i]]
+                    if self.args.policy_for_exploration
+                    else ""
+                ),
             )
             for i in range(len(prompts))
         ]
@@ -298,7 +359,9 @@ class Actor:
         self.eval_mode = True
         # print("Start offloading...")
         st = time.time()
-        self.cache_model_state = {k: v.cpu() for k, v in self.model.named_parameters()}
+        self.cache_model_state = tree.map_structure(
+            lambda x: x.cpu(), self.model.state_dict()
+        )
         # print(f"Finished offloading in {time.time() - st} seconds")
 
     def notify_eval_done(self):

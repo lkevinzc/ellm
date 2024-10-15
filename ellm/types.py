@@ -19,13 +19,15 @@ class PreferenceData:
     prompt: str
     chosen_response: str
     rejected_response: str
-    chosen_id: int
-    chosen_feature: torch.Tensor
-    rejected_feature: torch.Tensor
-    init_clash: bool
-    same: bool
-    is_model_data: bool
-    info: Metric
+    chosen_id: int = 0
+    chosen_feature: torch.Tensor = None
+    rejected_feature: torch.Tensor = None
+    init_clash: bool = False
+    same: bool = False
+    is_model_data: bool = False
+    info: Metric = None
+    env_chosen_response: str = ""
+    env_rejected_response: str = ""
 
 
 class RewardData(NamedTuple):

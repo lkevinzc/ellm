@@ -32,10 +32,10 @@ class DatasetActor:
             args.dataset_probs,
             strategy,
             args.seed,
-            max_count=args.max_samples,
+            max_count=args.max_train,
             stopping_strategy="all_exhausted",
         )
-        train_data = train_data.select(range(min(args.max_samples, len(train_data))))
+        train_data = train_data.select(range(min(args.max_train, len(train_data))))
 
         tokenizer = AutoTokenizer.from_pretrained(
             args.pretrain, trust_remote_code=True, use_fast=True
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         default="1.0",
         help="sampling probs for datasets",
     )
-    parser.add_argument("--max_samples", type=int, default=10000)
+    parser.add_argument("--max_train", type=int, default=10000)
 
     # Offline preference dataset
     parser.add_argument(

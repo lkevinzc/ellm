@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 import threading
 import time
 from http import HTTPStatus
@@ -10,6 +11,8 @@ import msgspec
 import numpy as np
 
 from ellm.oracles.base import OracleBase
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class RemoteRMOracle(OracleBase):

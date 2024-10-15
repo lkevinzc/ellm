@@ -26,8 +26,7 @@ from ellm.actor import Actor
 from ellm.model import LLM
 from ellm.preference import PreferenceCollector
 from ellm.types import DAPAlgo, PreferenceData
-from ellm.utils.data import (PreferenceDataset, PromptDataset,
-                             blending_datasets, get_tokenizer)
+from ellm.utils.data import PreferenceDataset, get_datasets, get_tokenizer
 from ellm.utils.deepspeed import get_strategy
 from ellm.utils.distributed import (init_process_group,
                                     node_ip_address_from_perspective,
@@ -107,54 +106,20 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         )
 
         # prepare datasets
-        prompts_data, eval_prompts_data = blending_datasets(
-            args.prompt_data,
-            args.prompt_data_probs,
-            strategy,
-            args.seed,
-            max_count=args.max_samples,
-            return_eval=True,
-            eval_sample=args.max_eval,
-        )
-        prompts_data = prompts_data.select(
-            range(min(args.max_samples, len(prompts_data)))
-        )
-        prompts_dataset = PromptDataset(
-            prompts_data,
-            tokenizer,
-            strategy,
-            input_template=args.input_template,
-            get_reference=True,
-        )
-        prompts_dataloader = strategy.setup_dataloader(
-            prompts_dataset,
-            args.micro_rollout_batch_size,
-            pin_memory=True,
-            shuffle=True,
-        )
-        strategy.print("Prompt dataset example:")
-        strategy.print("Processed:", prompts_dataset[0][0])
-        strategy.print("Raw:", prompts_dataset[0][1])
-        strategy.print("Prompt dataloader len:", len(prompts_dataloader))
+        self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
+        self.all_buffer = deque(maxlen=int(1e9))
 
-        eval_prompts_dataset = PromptDataset(
-            eval_prompts_data,
-            tokenizer,
-            strategy,
-            input_template=args.input_template,
-            get_reference=True,
-        )
-        self.eval_prompts_dataloader = DataLoader(
-            eval_prompts_dataset,
-            batch_size=args.eval_batch_size,
-            shuffle=False,
-            drop_last=False,
-            pin_memory=True,
-        )
+        self.prepare_data(strategy, tokenizer)
+        strategy.print("Prompt dataset example:")
+        strategy.print(self.prompts_dataset[0])
+        strategy.print("Prompt dataset len:", len(self.prompts_dataset))
+
+        self.eval_input_key = args.eval_input_key or args.input_key
+        self.eval_output_key = args.eval_output_key or args.output_key
 
         # configure scheduler
         num_policy_sgd_steps_per_episodes = int(
-            len(prompts_dataset) * args.max_epochs // args.train_batch_size
+            len(self.prompts_dataset) * args.max_epochs // args.train_batch_size
         )
         max_steps = math.ceil(
             args.num_prompt_epoch
@@ -192,7 +157,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if args.load_checkpoint:
             strategy.print("Load checkpoint: ", args.save_path)
 
-        exp_name = args.wandb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M")
+        exp_name = args.wandb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M:%S")
         self.save_path = os.path.join(args.save_path, exp_name)
         os.makedirs(self.save_path, exist_ok=True)
 
@@ -222,12 +187,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 strategy,
                 self._wandb,
             )
-        self.pi_buffer = deque(maxlen=args.micro_pi_buffer_maxlen)
-        self.all_buffer = deque(maxlen=int(1e9))
 
         self.strategy = strategy
         self.tokenizer = tokenizer
-        self.prompts_dataloader = prompts_dataloader
         self.update_interval = args.rollout_batch_size // (
             strategy.world_size * args.micro_rollout_batch_size
         )
@@ -285,6 +247,24 @@ class LearnerBase(abc.ABC, DistributedLauncher):
 
         dist.barrier()
 
+    def prepare_data(self, strategy, tokenizer):
+        self.prompts_dataset, self.eval_prompts_dataset = get_datasets(
+            tokenizer, strategy
+        )
+        self.prompts_dataloader = strategy.setup_dataloader(
+            self.prompts_dataset,
+            strategy.args.micro_rollout_batch_size,
+            pin_memory=True,
+            shuffle=True,
+        )
+        self.eval_prompts_dataloader = DataLoader(
+            self.eval_prompts_dataset,
+            batch_size=strategy.args.eval_batch_size,
+            shuffle=False,
+            drop_last=False,
+            pin_memory=True,
+        )
+
     def run(self):
         self._init(self.args, self.actors)
 
@@ -312,7 +292,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 if early_stop:
                     break
                 preference_data, self.actor_info = self.preference_collector(
-                    processed_prompts, refs
+                    raw_prompts, processed_prompts, refs
                 )
                 self.prompt_consumed += len(processed_prompts)
                 self.query_step += np.sum(
@@ -358,7 +338,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 )
 
         if self.strategy.is_rank_0():
-            self._wandb.finish()
+            self._wandb.finish() if self._wandb else None
             lp.stop()
 
     def process_preference_data(self, data_list: List[PreferenceData], raw_prompts):
@@ -367,7 +347,16 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
             if self.args.dump_all_buffer:
-                self.all_buffer.append(new_pref)
+                c = new_pref.env_chosen_response or new_pref.chosen_response
+                r = new_pref.env_rejected_response or new_pref.rejected_response
+                self.all_buffer.append(
+                    PreferenceData(
+                        prompt=new_pref.prompt,
+                        chosen_response=c,
+                        rejected_response=r,
+                        same=c == r,
+                    )
+                )
 
     def preference_learning(self, learning_round):
         torch.cuda.empty_cache()
@@ -379,6 +368,10 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             self.args.generate_max_length,
             self.strategy,
         )
+        if learning_round == 1:
+            self.strategy.print("Training example")
+            self.strategy.print(dataset[0])
+
         dataloader = DataLoader(
             dataset,
             batch_size=self.args.micro_train_batch_size,
@@ -543,18 +536,25 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         win_rate = 0
         win_rate_prob = 0
         if self.strategy.is_rank_0():
+            processed_prompts = []
             prompts = []
             responses = []
             references = []
             futs = []
             win_probs = []
             wins = []
-            for i, (processed_prompts, _, refs) in enumerate(dataloader):
-                prompts.extend(processed_prompts)
+            progress_bar = tqdm(range(dataloader.__len__()))
+            for i, (batch_processed_prompts, batch_prompts, refs) in enumerate(
+                dataloader
+            ):
+                processed_prompts.extend(batch_processed_prompts)
+                prompts.extend(batch_prompts)
                 references.extend(refs)
 
                 actor = self.actors[i % len(self.actors)]
-                fut = actor.futures.generate_and_maybe_eval(processed_prompts, refs)
+                fut = actor.futures.generate_and_maybe_eval(
+                    batch_prompts, batch_processed_prompts, refs
+                )
                 futs.append(fut)
                 if len(futs) == len(self.actors) or i == len(dataloader) - 1:
                     for fut in futs:
@@ -563,15 +563,21 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                         wins.extend(win_prob > 0.5)
                         win_probs.extend(win_prob)
                     futs.clear()
+                progress_bar.update()
 
             eval_res_path = os.path.join(self.save_path, "eval_results")
             os.makedirs(eval_res_path, exist_ok=True)
             pd.DataFrame(
-                {"prompt": prompts, "reference": references, "response": responses}
+                {
+                    self.eval_input_key: prompts,
+                    self.eval_output_key: responses,
+                    f"format_{self.eval_input_key}": processed_prompts,
+                    "reference": references,
+                    "generator": self.args.wandb_run_name,
+                }
             ).to_json(
                 os.path.join(eval_res_path, f"{steps}.json"),
                 orient="records",
-                lines=True,
             )
             win_rate = np.mean(wins).item()
             win_rate_prob = np.mean(win_probs).item()

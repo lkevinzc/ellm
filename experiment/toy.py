@@ -19,6 +19,7 @@ from ellm.utils.buffer import UniformBuffer
 
 reward_function_version = "3"
 
+
 def reward_function(y):
     mean, std_dev = -1, 0.5
     component_1 = (1 / (np.sqrt(2 * np.pi * std_dev**2))) * np.exp(
