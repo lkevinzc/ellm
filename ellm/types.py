@@ -26,6 +26,8 @@ class PreferenceData:
     same: bool = False
     is_model_data: bool = False
     info: Metric = None
+    env_chosen_response: str = ""
+    env_rejected_response: str = ""
 
 
 class RewardData(NamedTuple):

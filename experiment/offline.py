@@ -5,7 +5,16 @@ from ellm.learners import OfflineDAPLearner
 
 
 def main(args):
-    learner = OfflineDAPLearner(args)
+    cls = OfflineDAPLearner
+
+    def __init__(self, args):
+        # Hack to discard DistributedLauncher and use deepspeed launcher.
+        self.args = args
+        self.actors = []
+        self.ipc_server = None
+
+    cls.__init__ = __init__
+    learner = cls(args=args)
     learner.run()
 
 

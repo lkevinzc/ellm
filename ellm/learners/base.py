@@ -157,7 +157,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
         if args.load_checkpoint:
             strategy.print("Load checkpoint: ", args.save_path)
 
-        exp_name = args.wandb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M")
+        exp_name = args.wandb_run_name + "_" + datetime.now().strftime("%m%dT%H:%M:%S")
         self.save_path = os.path.join(args.save_path, exp_name)
         os.makedirs(self.save_path, exist_ok=True)
 
@@ -292,7 +292,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 if early_stop:
                     break
                 preference_data, self.actor_info = self.preference_collector(
-                    processed_prompts, refs
+                    raw_prompts, processed_prompts, refs
                 )
                 self.prompt_consumed += len(processed_prompts)
                 self.query_step += np.sum(
@@ -347,12 +347,14 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             new_pref = dataclasses.replace(pref, prompt=raw_prompts[i])  # shallow copy
             self.pi_buffer.append(new_pref)
             if self.args.dump_all_buffer:
+                c = new_pref.env_chosen_response or new_pref.chosen_response
+                r = new_pref.env_rejected_response or new_pref.rejected_response
                 self.all_buffer.append(
                     PreferenceData(
                         prompt=new_pref.prompt,
-                        chosen_response=new_pref.chosen_response,
-                        rejected_response=new_pref.rejected_response,
-                        same=new_pref.chosen_response == new_pref.rejected_response,
+                        chosen_response=c,
+                        rejected_response=r,
+                        same=c == r,
                     )
                 )
 

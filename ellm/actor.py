@@ -1,11 +1,11 @@
 import logging
 import time
 from typing import List
-from warnings import warn
 
 import einops
 import numpy as np
 import torch
+import tree
 import vllm
 
 from ellm import oracles
@@ -14,6 +14,8 @@ from ellm.rm import backbone, model
 from ellm.types import PreferenceData
 from ellm.utils.distributed import WorkerWrap, torch_type_codec
 from ellm.utils.ipc import PlasmaShmClient
+
+logging.getLogger("vllm").setLevel(logging.ERROR)
 
 
 class Actor:
@@ -68,7 +70,7 @@ class Actor:
         self.learning_rm = False
         if args.exp_method == "no":
             if self.sampling_params.n == 2:
-                warn(
+                logging.warn(
                     f"trying to sample {self.sampling_params.n} responses but no selection mechanism is provided"
                 )
         else:
@@ -175,7 +177,10 @@ class Actor:
         return (win_probs_1 + win_probs_2) / 2
 
     def step(
-        self, prompts: List[str], references: List[str] = None
+        self,
+        prompts: List[str],
+        formatted_prompts: List[str],
+        references: List[str] = None,
     ) -> List[PreferenceData]:
         """Step the actor.
 
@@ -191,7 +196,7 @@ class Actor:
         info = dict()
 
         # step 1. generate
-        all_candidates = self.generate(prompts, self.sampling_params)
+        all_candidates = self.generate(formatted_prompts, self.sampling_params)
 
         # step 2a. optional selection
         results = None
@@ -305,6 +310,14 @@ class Actor:
                 same=same_response[i],
                 is_model_data=results.is_model_data[i] if self.learning_rm else False,
                 info=info,
+                env_chosen_response=(
+                    candidates[i][chosen[i]] if self.args.policy_for_exploration else ""
+                ),
+                env_rejected_response=(
+                    candidates[i][rejected[i]]
+                    if self.args.policy_for_exploration
+                    else ""
+                ),
             )
             for i in range(len(prompts))
         ]
@@ -346,7 +359,9 @@ class Actor:
         self.eval_mode = True
         # print("Start offloading...")
         st = time.time()
-        self.cache_model_state = {k: v.cpu() for k, v in self.model.named_parameters()}
+        self.cache_model_state = tree.map_structure(
+            lambda x: x.cpu(), self.model.state_dict()
+        )
         # print(f"Finished offloading in {time.time() - st} seconds")
 
     def notify_eval_done(self):

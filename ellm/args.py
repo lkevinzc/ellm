@@ -147,9 +147,9 @@ def get_default_parser():
     parser.add_argument("--top_p", type=float, default=1.0)
     parser.add_argument("--top_k", type=float, default=-1)
     parser.add_argument("--num_samples", type=int, default=2)
-    parser.add_argument("--eval_generate_max_length", type=int, default=1024)
-    parser.add_argument("--eval_temperature", type=float, default=0.7)
-    parser.add_argument("--eval_top_p", type=float, default=1.0)
+    parser.add_argument("--eval_generate_max_length", type=int, default=200)
+    parser.add_argument("--eval_temperature", type=float, default=0.0)
+    parser.add_argument("--eval_top_p", type=float, default=0.95)
     parser.add_argument("--eval_top_k", type=float, default=-1)
 
     parser.add_argument("--save_path", type=str, default="./output")
