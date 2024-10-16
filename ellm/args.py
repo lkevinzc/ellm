@@ -242,4 +242,5 @@ def default_args_validation(args: argparse.Namespace):
         args.eval_batch_size = args.micro_rollout_batch_size
     if args.rm_train_budget == -1:
         args.rm_train_budget = math.inf
+    args.max_queries = max(args.max_queries, args.max_train)
     return args

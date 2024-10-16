@@ -357,19 +357,19 @@ class Actor:
     def notify_eval_start(self):
         """Temporarily cache the current behavior policy weights to CPU."""
         self.eval_mode = True
-        # print("Start offloading...")
+        print("Start offloading...")
         st = time.time()
         self.cache_model_state = tree.map_structure(
             lambda x: x.cpu(), self.model.state_dict()
         )
-        # print(f"Finished offloading in {time.time() - st} seconds")
+        print(f"Finished offloading in {time.time() - st} seconds")
 
     def notify_eval_done(self):
         assert self.eval_mode
-        # print("Start loading from cpu...")
+        print("Start loading from cpu...")
         st = time.time()
         self.model.load_state_dict(self.cache_model_state)
-        # print(f"Finished loading in {time.time() - st} seconds")
+        print(f"Finished loading in {time.time() - st} seconds")
         self.eval_mode = False
 
     def _stop_remote_worker_execution_loop(self):
