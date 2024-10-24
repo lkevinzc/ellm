@@ -390,7 +390,9 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             acc_mean = []
             loss_mean = []
             reward_margin = []
+            learn_batch_time = []
             self.model.train()
+            st = time.time()
             for data in dataloader:
                 if local_sgd_steps > self.args.max_sgd_steps:
                     break
@@ -407,6 +409,8 @@ class LearnerBase(abc.ABC, DistributedLauncher):
                 step_bar.update()
                 self.global_step += 1
                 if self.global_step % self.strategy.accumulated_gradient == 0:
+                    learn_batch_time.append(time.time() - st)
+                    st = time.time()
                     self.policy_sgd_step += 1
                     local_sgd_steps += 1
 
@@ -421,6 +425,7 @@ class LearnerBase(abc.ABC, DistributedLauncher):
             "loss_mean": np.mean(loss_mean),
             "reward_margin": np.mean(reward_margin),
             "learning_round": learning_round,
+            "learn_batch_time": np.mean(learn_batch_time),
             **tree.map_structure(lambda x: x.cpu().float().mean().item(), infos),
         }
         train_info = {

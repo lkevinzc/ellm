@@ -60,7 +60,7 @@ class PreferenceCollector:
         actor_time = time.time() - st_time
 
         metric = {
-            "actor/generate_time": actor_time,
+            "actor/total_time": actor_time,
             "actor/chosen_avg_str_len": np.mean(
                 [len(p.chosen_response) for p in preference_data]
             ),

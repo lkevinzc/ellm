@@ -15,8 +15,8 @@
 ## Installation
 
 ```console
-pip install torch
 pip install -r requirements.txt
+pip install flash-attn==2.6.3
 pip install -e .
 export DS_SKIP_CUDA_CHECK=1 # suppress adam offload error
 ```

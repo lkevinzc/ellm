@@ -196,7 +196,9 @@ class Actor:
         info = dict()
 
         # step 1. generate
+        st = time.time()
         all_candidates = self.generate(formatted_prompts, self.sampling_params)
+        info["actor/generate_time"] = time.time() - st
 
         # step 2a. optional selection
         results = None

@@ -32,6 +32,12 @@ def get_program(
     elif args.total_gpus == 5:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 3, 2, 1]
+    elif args.total_gpus == 6:
+        actor_gpus = [0, 1, 2]
+        learner_gpus = [3, 4, 5]
+        if args.collocate:
+            actor_gpus = [0, 1, 2, 3]
+            learner_gpus = [4, 3, 2, 1]
     elif args.total_gpus == 8:
         actor_gpus = [0, 1, 2, 3]
         learner_gpus = [4, 5, 6, 7]
