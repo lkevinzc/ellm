@@ -1,0 +1,16 @@
+{
+    "python.pythonPath": "/home/liuzc/miniforge3/envs/online/bin/python",
+    "python.formatting.provider": "black",
+    "python.sortImports": "isort",
+    "python.analysis.autoImportCompletions": true,
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/node_modules/*/**": true,
+        "**/.ruff_cache/**": true,
+        "**/output/*/**": true,
+        "notebooks": true,
+      },
+    "editor.rulers": [79, 120],
+    "editor.wordWrap": "on",
+}

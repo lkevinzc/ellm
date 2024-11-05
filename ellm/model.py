@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from peft import LoraConfig, TaskType, get_peft_model
 from peft.tuners.lora import LoraLayer
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
-from transformers.deepspeed import HfDeepSpeedConfig
 
 
 def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -39,12 +38,6 @@ class LLM(nn.Module):
                 "flash_attention_2" if use_flash_attention_2 else "eager"
             )
 
-            # Note: dschf is defined in function scope to avoid global effects
-            # https://huggingface.co/docs/transformers/deepspeed#non-trainer-deepspeed-integration
-            if ds_config is not None and ds_config["zero_optimization"]["stage"] == 3:
-                dschf = HfDeepSpeedConfig(ds_config)
-            else:
-                dschf = None
 
             if load_in_4bit:
                 assert bf16, "we only support bnb_4bit_compute_dtype = bf16"
