@@ -20,7 +20,7 @@ output = tokenizer(
 )
 
 sampling_params = vllm.SamplingParams(
-    temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=8
+    temperature=0.7, top_p=0.9, max_tokens=512, seed=0, n=8, logprobs=1
 )
 llm = vllm.LLM(
     **{
@@ -87,8 +87,9 @@ prompts = []
 candidates = {}
 for i, output in enumerate(outputs):
     # for each prompt
+    # pdb.set_trace()
     prompt_response_ids = [
-        torch.tensor(output.prompt_token_ids + o.token_ids) for o in output.outputs
+        torch.tensor(output.prompt_token_ids + list(o.token_ids)) for o in output.outputs
     ]
     prompt_response_masks = [torch.ones_like(ids) for ids in prompt_response_ids]
 

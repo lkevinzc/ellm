@@ -30,7 +30,7 @@ def get_default_parser():
     parser.add_argument(
         "--total_gpus",
         type=int,
-        choices=[2, 3, 4, 5, 8],
+        choices=[2, 3, 4, 5, 6, 8],
         default=5,
     )
     parser.add_argument("--collocate", action="store_true")
@@ -50,8 +50,15 @@ def get_default_parser():
     parser.add_argument(
         "--eval_data", type=str, default="", help="Defaults to prompt_data if empty"
     )
-    parser.add_argument("--eval_input_key", type=str, default="")
-    parser.add_argument("--eval_output_key", type=str, default="")
+    parser.add_argument(
+        "--eval_input_key", type=str, default="", help="Defaults to input_key if empty"
+    )
+    parser.add_argument(
+        "--eval_output_key",
+        type=str,
+        default="",
+        help="Defaults to output_key if empty",
+    )
 
     parser.add_argument("--train_split", type=str, default="train")
     parser.add_argument("--eval_split", type=str, default="test")
@@ -242,4 +249,5 @@ def default_args_validation(args: argparse.Namespace):
         args.eval_batch_size = args.micro_rollout_batch_size
     if args.rm_train_budget == -1:
         args.rm_train_budget = math.inf
+    args.max_queries = max(args.max_queries, args.max_train)
     return args
